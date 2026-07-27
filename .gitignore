@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+
+# Xcode user-specific state
+xcuserdata/
+**/xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
+# Build products and package caches
+DerivedData/
+**/DerivedData/
+build/
+.build/
+.swiftpm/
+Packages/
+
+# Test result bundles and local diagnostics
+TestResults/
+*.xcresult
+*.xcresult/
+
+# Keep the named final PNGs at Screenshots/*.png, but exclude
+# extracted attachments, diagnostic recordings, and history subfolders.
+Screenshots/*/
+*.mp4
+
+# Editor and temporary files
+*.swp
+*.tmp
+*~
