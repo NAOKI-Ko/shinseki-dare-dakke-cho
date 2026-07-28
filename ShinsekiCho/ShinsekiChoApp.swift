@@ -1,10 +1,10 @@
 import SwiftUI
 import SwiftData
-import UIKit
 
 @main
 struct ShinsekiChoApp: App {
     private let container: ModelContainer
+    @State private var trialManager: TrialManager
 
     init() {
         do {
@@ -42,6 +42,33 @@ struct ShinsekiChoApp: App {
                 try Self.seedUITestData(in: container.mainContext)
             }
             self.container = container
+
+            #if DEBUG
+            if arguments.contains("-ui-testing-reset") {
+                try? KeychainStore().removeValue(forKey: TrialManager.firstLaunchDateKey)
+                UserDefaults.standard.removeObject(forKey: TrialManager.firstLaunchDateKey)
+                UserDefaults.standard.removeObject(forKey: "onboarding.guidePending")
+            }
+            if arguments.contains("-ui-testing-trial-expired") {
+                UserDefaults.standard.set(
+                    Date().addingTimeInterval(-8 * 24 * 60 * 60),
+                    forKey: TrialManager.firstLaunchDateKey
+                )
+            }
+            let isPurchasedUITest = arguments.contains("-ui-testing-purchased")
+            if isUITesting {
+                _trialManager = State(
+                    initialValue: TrialManager(
+                        entitlementChecker: { isPurchasedUITest },
+                        productLoader: { nil }
+                    )
+                )
+            } else {
+                _trialManager = State(initialValue: TrialManager())
+            }
+            #else
+            _trialManager = State(initialValue: TrialManager())
+            #endif
         } catch {
             fatalError("SwiftDataコンテナを作成できませんでした: \(error)")
         }
@@ -51,6 +78,8 @@ struct ShinsekiChoApp: App {
         WindowGroup {
             ContentView()
                 .tint(AppTheme.ai)
+                .environment(trialManager)
+                .task { await trialManager.prepare() }
         }
         .modelContainer(container)
     }
@@ -73,12 +102,27 @@ struct ShinsekiChoApp: App {
         let spouse = Person(
             name: "佐藤 美咲",
             kana: "さとう みさき",
-            relationNote: "配偶者",
-            photoData: makeUITestPortraitData()
+            relationNote: "配偶者"
+        )
+        let spouseFather = Person(
+            name: "佐藤 修一",
+            kana: "さとう しゅういち",
+            relationNote: "配偶者の父"
+        )
+        let spouseBrother = Person(
+            name: "佐藤 健太",
+            kana: "さとう けんた",
+            relationNote: "配偶者の兄"
+        )
+        let nephew = Person(
+            name: "佐藤 蓮",
+            kana: "さとう れん",
+            relationNote: "配偶者の兄の子"
         )
         let child = Person(name: "山田 葵", kana: "やまだ あおい", relationNote: "子")
         let uncle = Person(name: "山田 次郎", kana: "やまだ じろう", relationNote: "叔父")
-        [selfPerson, father, mother, spouse, child, uncle].forEach(context.insert)
+        [selfPerson, father, mother, spouse, spouseFather, spouseBrother, nephew, child, uncle]
+            .forEach(context.insert)
         try context.save()
 
         RelationshipManager.setSpouse(father, mother)
@@ -87,6 +131,9 @@ struct ShinsekiChoApp: App {
         RelationshipManager.setSpouse(selfPerson, spouse)
         RelationshipManager.addParentChild(parent: selfPerson, child: child)
         RelationshipManager.addParentChild(parent: spouse, child: child)
+        RelationshipManager.addParentChild(parent: spouseFather, child: spouse)
+        RelationshipManager.addParentChild(parent: spouseFather, child: spouseBrother)
+        RelationshipManager.addParentChild(parent: spouseBrother, child: nephew)
         RelationshipManager.addParentChild(parent: father, child: uncle)
         RelationshipManager.addParentChild(parent: mother, child: uncle)
 
@@ -101,23 +148,6 @@ struct ShinsekiChoApp: App {
         try context.save()
     }
 
-    /// UIテストの「写真あり」を黒い1px画像ではなく、テーマ色だけで描いた顔写真データにする。
-    private static func makeUITestPortraitData() -> Data {
-        let size = CGSize(width: 96, height: 96)
-        return UIGraphicsImageRenderer(size: size).pngData { rendererContext in
-            UIColor(AppTheme.paperRaised).setFill()
-            rendererContext.cgContext.fill(CGRect(origin: .zero, size: size))
-
-            UIColor(AppTheme.ai).setFill()
-            rendererContext.cgContext.fillEllipse(
-                in: CGRect(x: 33, y: 19, width: 30, height: 30)
-            )
-            UIBezierPath(
-                roundedRect: CGRect(x: 20, y: 54, width: 56, height: 48),
-                cornerRadius: 24
-            ).fill()
-        }
-    }
 }
 
 // MARK: - テーマ「和帳モダン」(おつきあい帳・命日帳と共通)

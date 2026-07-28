@@ -20,12 +20,15 @@ enum PersonContactURL {
 
 struct PersonDetailView: View {
     @Environment(\.modelContext) private var context
+    @Environment(TrialManager.self) private var trialManager
     @Bindable var person: Person
 
     @Query(filter: #Predicate<Person> { $0.isSelf }) private var selfPersonQuery: [Person]
 
     @State private var showingEdit = false
     @State private var showingRelationEditor = false
+    @State private var mapSelectedPerson: Person?
+    @State private var showingPurchaseSheet = false
 
     var body: some View {
         List {
@@ -49,6 +52,21 @@ struct PersonDetailView: View {
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 .listRowBackground(Color.clear)
             }
+
+            // 関係の編集は、縦に大きいつながりマップより前に置き、
+            // 詳細を開いた直後に見つけられるようにする。
+            Section {
+                Button {
+                    requestEditing { showingRelationEditor = true }
+                } label: {
+                    Label("関係を編集する", systemImage: "person.line.dotted.person.fill")
+                }
+                .foregroundStyle(AppTheme.ai)
+                .accessibilityIdentifier("personDetail.editRelations")
+            } footer: {
+                Text("配偶者・親・子を登録すると、つながりマップに表示されます。")
+            }
+            .listRowBackground(AppTheme.paperRaised)
 
             // 連絡先(タップで発信・メール作成)
             if person.hasContact {
@@ -125,7 +143,12 @@ struct PersonDetailView: View {
             // つながりマップ(自分を起点に、辿った人物が蓄積表示される)
             Section {
                 if let selfPerson = selfPersonQuery.first {
-                    FamilyGraphView(selfPerson: selfPerson) { _ in }
+                    FamilyGraphView(
+                        selfPerson: selfPerson,
+                        displayedPerson: person,
+                        resetButtonIdentifier: "connectionMap.detail.resetButton",
+                        onShowDetail: { mapSelectedPerson = $0 }
+                    )
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(AppTheme.paperRaised)
                 } else {
@@ -140,19 +163,6 @@ struct PersonDetailView: View {
             } footer: {
                 Text("ノードをタップすると、その人の親・子・配偶者が地図上に広がります。ピンチで拡大縮小、ドラッグで移動できます。")
             }
-
-            // 関係の編集(常にperson自身に対して行う)
-            Section {
-                Button {
-                    showingRelationEditor = true
-                } label: {
-                    Label("関係を編集する", systemImage: "person.line.dotted.person.fill")
-                }
-                .foregroundStyle(AppTheme.ai)
-            } footer: {
-                Text("配偶者・親・子を登録すると、つながりマップに表示されます。")
-            }
-            .listRowBackground(AppTheme.paperRaised)
 
             // 会話メモ
             if !person.memo.isEmpty {
@@ -193,7 +203,9 @@ struct PersonDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("編集") { showingEdit = true }
+                Button("編集") {
+                    requestEditing { showingEdit = true }
+                }
             }
         }
         .sheet(isPresented: $showingEdit) {
@@ -201,6 +213,12 @@ struct PersonDetailView: View {
         }
         .sheet(isPresented: $showingRelationEditor) {
             RelationEditorView(person: person)
+        }
+        .sheet(isPresented: $showingPurchaseSheet) {
+            PurchaseSheet()
+        }
+        .navigationDestination(item: $mapSelectedPerson) { selectedPerson in
+            PersonDetailView(person: selectedPerson)
         }
     }
 
@@ -211,6 +229,14 @@ struct PersonDetailView: View {
             && person.postalAddress.isEmpty
             && person.favorites.isEmpty
             && person.dietaryNotes.isEmpty
+    }
+
+    private func requestEditing(_ action: () -> Void) {
+        if trialManager.canEdit {
+            action()
+        } else {
+            showingPurchaseSheet = true
+        }
     }
 
     @ViewBuilder
@@ -239,10 +265,13 @@ struct PersonDetailView: View {
 struct RelationEditorView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(TrialManager.self) private var trialManager
     @Bindable var person: Person
 
     @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
     private var allPersons: [Person]
+
+    @State private var showingPurchaseSheet = false
 
     private var candidates: [Person] {
         allPersons.filter { $0.persistentModelID != person.persistentModelID }
@@ -256,7 +285,9 @@ struct RelationEditorView: View {
                         HStack {
                             Text(spouse.name)
                             Spacer()
-                            Button("解除") { RelationshipManager.removeSpouse(of: person) }
+                            Button("解除") {
+                                performEdit { RelationshipManager.removeSpouse(of: person) }
+                            }
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.attention)
                         }
@@ -264,7 +295,9 @@ struct RelationEditorView: View {
                         Menu("配偶者を選ぶ") {
                             ForEach(candidates) { candidate in
                                 Button(candidate.name) {
-                                    RelationshipManager.setSpouse(person, candidate)
+                                    performEdit {
+                                        RelationshipManager.setSpouse(person, candidate)
+                                    }
                                 }
                             }
                         }
@@ -277,7 +310,11 @@ struct RelationEditorView: View {
                         HStack {
                             Text(parent.name)
                             Spacer()
-                            Button("解除") { RelationshipManager.removeParentChild(parent: parent, child: person) }
+                            Button("解除") {
+                                performEdit {
+                                    RelationshipManager.removeParentChild(parent: parent, child: person)
+                                }
+                            }
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.attention)
                         }
@@ -286,7 +323,9 @@ struct RelationEditorView: View {
                         Menu("親を追加") {
                             ForEach(candidates.filter { !person.parents.contains($0) }) { candidate in
                                 Button(candidate.name) {
-                                    RelationshipManager.addParentChild(parent: candidate, child: person)
+                                    performEdit {
+                                        RelationshipManager.addParentChild(parent: candidate, child: person)
+                                    }
                                 }
                             }
                         }
@@ -299,7 +338,11 @@ struct RelationEditorView: View {
                         HStack {
                             Text(child.name)
                             Spacer()
-                            Button("解除") { RelationshipManager.removeParentChild(parent: person, child: child) }
+                            Button("解除") {
+                                performEdit {
+                                    RelationshipManager.removeParentChild(parent: person, child: child)
+                                }
+                            }
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.attention)
                         }
@@ -307,7 +350,9 @@ struct RelationEditorView: View {
                     Menu("子を追加") {
                         ForEach(candidates.filter { !person.children.contains($0) }) { candidate in
                             Button(candidate.name) {
-                                RelationshipManager.addParentChild(parent: person, child: candidate)
+                                performEdit {
+                                    RelationshipManager.addParentChild(parent: person, child: candidate)
+                                }
                             }
                         }
                     }
@@ -323,6 +368,17 @@ struct RelationEditorView: View {
                     Button("完了") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showingPurchaseSheet) {
+                PurchaseSheet()
+            }
+        }
+    }
+
+    private func performEdit(_ action: () -> Void) {
+        if trialManager.canEdit {
+            action()
+        } else {
+            showingPurchaseSheet = true
         }
     }
 }

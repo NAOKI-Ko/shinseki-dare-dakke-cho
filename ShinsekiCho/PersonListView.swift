@@ -3,12 +3,10 @@ import SwiftData
 import PhotosUI
 
 struct PersonListView: View {
-    @Environment(\.modelContext) private var context
     @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
     private var persons: [Person]
 
-    @State private var searchText = ""
-    @State private var showingAddSheet = false
+    @Binding var searchText: String
 
     private let columns = [GridItem(.adaptive(minimum: 92), spacing: 14)]
 
@@ -22,62 +20,42 @@ struct PersonListView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if persons.isEmpty {
-                    VStack(spacing: 14) {
-                        Image(systemName: "person.badge.plus")
-                            .font(.system(size: 40))
-                            .foregroundStyle(AppTheme.ai.opacity(0.5))
-                        Text("まだ登録がありません")
-                            .font(.minchoTitle(18, relativeTo: .title3))
-                            .foregroundStyle(AppTheme.ink)
-                        Text("右上の＋から、法事や帰省で会う親戚を登録してください。顔写真を添えると、あとで探しやすくなります。")
-                            .font(.subheadline)
-                            .foregroundStyle(AppTheme.inkSoft)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AppTheme.paper)
-                } else {
-                    ScrollView {
-                        LazyVGrid(columns: columns, spacing: 18) {
-                            ForEach(filteredPersons) { person in
-                                NavigationLink(value: person) {
-                                    PersonGridCell(person: person)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("person.cell.\(person.name)")
-                                .accessibilityValue(
-                                    PersonPhotoSupport.image(from: person.photoData) == nil
-                                        ? "写真なし"
-                                        : "写真あり"
-                                )
+        Group {
+            if persons.isEmpty {
+                VStack(spacing: 14) {
+                    Image(systemName: "person.badge.plus")
+                        .font(.system(size: 40))
+                        .foregroundStyle(AppTheme.ai.opacity(0.5))
+                    Text("まだ登録がありません")
+                        .font(.minchoTitle(18, relativeTo: .title3))
+                        .foregroundStyle(AppTheme.ink)
+                    Text("右上の＋から、法事や帰省で会う親戚を登録してください。顔写真を添えると、あとで探しやすくなります。")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.inkSoft)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AppTheme.paper)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 18) {
+                        ForEach(filteredPersons) { person in
+                            NavigationLink(value: person) {
+                                PersonGridCell(person: person)
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("person.cell.\(person.name)")
+                            .accessibilityValue(
+                                PersonPhotoSupport.image(from: person.photoData) == nil
+                                    ? "写真なし"
+                                    : "写真あり"
+                            )
                         }
-                        .padding(16)
                     }
-                    .background(AppTheme.paper)
-                    .searchable(text: $searchText, prompt: "名前・続柄で探す")
+                    .padding(16)
                 }
-            }
-            .navigationTitle("親戚")
-            .navigationDestination(for: Person.self) { person in
-                PersonDetailView(person: person)
-            }
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingAddSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("人物を追加")
-                }
-            }
-            .sheet(isPresented: $showingAddSheet) {
-                PersonFormView()
+                .background(AppTheme.paper)
             }
         }
     }
@@ -129,6 +107,7 @@ private struct PersonGridCell: View {
 struct PersonFormView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(TrialManager.self) private var trialManager
 
     var personToEdit: Person? = nil
 
@@ -153,6 +132,7 @@ struct PersonFormView: View {
     @State private var favorites = ""
     @State private var dietaryNotes = ""
     @State private var memo = ""
+    @State private var showingPurchaseSheet = false
     @FocusState private var isTextInputFocused: Bool
 
     private var isEditing: Bool { personToEdit != nil }
@@ -319,6 +299,9 @@ struct PersonFormView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingPurchaseSheet) {
+                PurchaseSheet()
+            }
         }
     }
 
@@ -342,6 +325,10 @@ struct PersonFormView: View {
     }
 
     private func save() {
+        guard trialManager.canEdit else {
+            showingPurchaseSheet = true
+            return
+        }
         let finalLastMetDate = hasLastMet ? (lastMetDate ?? .now) : nil
         let finalBirthday = hasBirthday ? (birthday ?? .now) : nil
         let validatedPhotoData = PersonPhotoSupport.image(from: photoData) == nil ? nil : photoData

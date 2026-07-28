@@ -1,0 +1,40 @@
+{
+  "identifier" : "19F323C8-B134-4A4E-9E51-B74AA945A8D7",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "600",
+      "familyShareable" : false,
+      "internalID" : "F555D341-A4F3-437F-8D89-CE876A7B719F",
+      "localizations" : [
+        {
+          "description" : "7日間の試用期間終了後も、人物・関係・集まりの追加と編集を利用できます。",
+          "displayName" : "親戚だれだっけ帳 フルアクセス",
+          "locale" : "ja_JP"
+        }
+      ],
+      "productID" : "com.naoki-ko.shinsekicho.fullaccess",
+      "referenceName" : "ShinsekiCho Full Access",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "0000000000",
+    "_developerTeamID" : "",
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 0,
+    "_locale" : "ja_JP",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "JPN",
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

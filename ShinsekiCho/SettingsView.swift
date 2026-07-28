@@ -3,16 +3,35 @@ import SwiftData
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
+    @Environment(TrialManager.self) private var trialManager
     @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
     private var allPersons: [Person]
     @Query(filter: #Predicate<Person> { $0.isSelf }) private var selfPersonQuery: [Person]
     @State private var showingSelfPicker = false
+    @State private var showingPurchaseSheet = false
 
     private var selfPerson: Person? { selfPersonQuery.first }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    LabeledContent("利用状況", value: trialManager.status.settingsText)
+                        .accessibilityIdentifier("settings.trialStatus")
+                    if trialManager.status != .purchased {
+                        Button("フルアクセスを購入") {
+                            showingPurchaseSheet = true
+                        }
+                        .foregroundStyle(AppTheme.ai)
+                        .accessibilityIdentifier("settings.purchaseButton")
+                    }
+                } header: {
+                    Text("7日間無料トライアル")
+                } footer: {
+                    Text("試用期間が終わっても、登録済みデータの閲覧は引き続き無料です。")
+                }
+                .listRowBackground(AppTheme.paperRaised)
+
                 Section {
                     if let selfPerson {
                         LabeledContent("自分", value: selfPerson.name)
@@ -22,7 +41,11 @@ struct SettingsView: View {
                             .foregroundStyle(AppTheme.attention)
                     }
                     Button(selfPerson == nil ? "自分を登録する" : "変更する") {
-                        showingSelfPicker = true
+                        if trialManager.canEdit {
+                            showingSelfPicker = true
+                        } else {
+                            showingPurchaseSheet = true
+                        }
                     }
                     .foregroundStyle(AppTheme.ai)
                 } header: {
@@ -50,6 +73,9 @@ struct SettingsView: View {
             .sheet(isPresented: $showingSelfPicker) {
                 SelfPersonPickerView(allPersons: allPersons)
             }
+            .sheet(isPresented: $showingPurchaseSheet) {
+                PurchaseSheet()
+            }
         }
     }
 
@@ -62,10 +88,12 @@ struct SettingsView: View {
 private struct SelfPersonPickerView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(TrialManager.self) private var trialManager
     let allPersons: [Person]
 
     @State private var showingNewPersonForm = false
     @State private var newName = ""
+    @State private var showingPurchaseSheet = false
 
     var body: some View {
         NavigationStack {
@@ -104,16 +132,27 @@ private struct SelfPersonPickerView: View {
                     Button("キャンセル") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showingPurchaseSheet) {
+                PurchaseSheet()
+            }
         }
     }
 
     private func selectExisting(_ person: Person) {
+        guard trialManager.canEdit else {
+            showingPurchaseSheet = true
+            return
+        }
         for p in allPersons where p.isSelf { p.isSelf = false }
         person.isSelf = true
         dismiss()
     }
 
     private func markAsSelf(create: Bool) {
+        guard trialManager.canEdit else {
+            showingPurchaseSheet = true
+            return
+        }
         for p in allPersons where p.isSelf { p.isSelf = false }
         let person = Person(name: newName, isSelf: true)
         context.insert(person)

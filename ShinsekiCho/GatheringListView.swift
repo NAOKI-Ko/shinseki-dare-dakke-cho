@@ -3,10 +3,12 @@ import SwiftData
 
 struct GatheringListView: View {
     @Environment(\.modelContext) private var context
+    @Environment(TrialManager.self) private var trialManager
     @Query(sort: [SortDescriptor(\Gathering.date, order: .reverse)])
     private var gatherings: [Gathering]
 
     @State private var showingAddSheet = false
+    @State private var showingPurchaseSheet = false
 
     var body: some View {
         NavigationStack {
@@ -45,6 +47,10 @@ struct GatheringListView: View {
                             .listRowBackground(AppTheme.paperRaised)
                         }
                         .onDelete { offsets in
+                            guard trialManager.canEdit else {
+                                showingPurchaseSheet = true
+                                return
+                            }
                             for i in offsets { context.delete(gatherings[i]) }
                         }
                     }
@@ -58,12 +64,21 @@ struct GatheringListView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showingAddSheet = true } label: { Image(systemName: "plus") }
+                    Button {
+                        if trialManager.canEdit {
+                            showingAddSheet = true
+                        } else {
+                            showingPurchaseSheet = true
+                        }
+                    } label: { Image(systemName: "plus") }
                         .accessibilityLabel("集まりを追加")
                 }
             }
             .sheet(isPresented: $showingAddSheet) {
                 GatheringFormView()
+            }
+            .sheet(isPresented: $showingPurchaseSheet) {
+                PurchaseSheet()
             }
         }
     }
@@ -72,12 +87,14 @@ struct GatheringListView: View {
 struct GatheringFormView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(TrialManager.self) private var trialManager
     var gatheringToEdit: Gathering? = nil
 
     @State private var title = ""
     @State private var date = Date.now
     @State private var place = ""
     @State private var note = ""
+    @State private var showingPurchaseSheet = false
 
     var body: some View {
         NavigationStack {
@@ -108,10 +125,17 @@ struct GatheringFormView: View {
                     title = g.title; date = g.date; place = g.place; note = g.note
                 }
             }
+            .sheet(isPresented: $showingPurchaseSheet) {
+                PurchaseSheet()
+            }
         }
     }
 
     private func save() {
+        guard trialManager.canEdit else {
+            showingPurchaseSheet = true
+            return
+        }
         if let g = gatheringToEdit {
             g.title = title; g.date = date; g.place = place; g.note = note
         } else {
@@ -123,8 +147,10 @@ struct GatheringFormView: View {
 
 struct GatheringDetailView: View {
     @Environment(\.modelContext) private var context
+    @Environment(TrialManager.self) private var trialManager
     @Bindable var gathering: Gathering
     @State private var showingAddAttendee = false
+    @State private var showingPurchaseSheet = false
 
     @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
     private var allPersons: [Person]
@@ -156,13 +182,21 @@ struct GatheringDetailView: View {
                     }
                 }
                 .onDelete { offsets in
+                    guard trialManager.canEdit else {
+                        showingPurchaseSheet = true
+                        return
+                    }
                     for i in offsets {
                         let p = gathering.attendees[i]
                         gathering.attendees.removeAll { $0.persistentModelID == p.persistentModelID }
                     }
                 }
                 Button {
-                    showingAddAttendee = true
+                    if trialManager.canEdit {
+                        showingAddAttendee = true
+                    } else {
+                        showingPurchaseSheet = true
+                    }
                 } label: {
                     Label("出席者を追加", systemImage: "person.badge.plus")
                 }
@@ -182,13 +216,18 @@ struct GatheringDetailView: View {
         .sheet(isPresented: $showingAddAttendee) {
             AttendeePickerView(gathering: gathering, allPersons: allPersons)
         }
+        .sheet(isPresented: $showingPurchaseSheet) {
+            PurchaseSheet()
+        }
     }
 }
 
 private struct AttendeePickerView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(TrialManager.self) private var trialManager
     @Bindable var gathering: Gathering
     let allPersons: [Person]
+    @State private var showingPurchaseSheet = false
 
     private var candidates: [Person] {
         allPersons.filter { p in !gathering.attendees.contains { $0.persistentModelID == p.persistentModelID } }
@@ -198,7 +237,11 @@ private struct AttendeePickerView: View {
         NavigationStack {
             List(candidates) { person in
                 Button {
-                    gathering.attendees.append(person)
+                    if trialManager.canEdit {
+                        gathering.attendees.append(person)
+                    } else {
+                        showingPurchaseSheet = true
+                    }
                 } label: {
                     HStack {
                         Text(person.name).foregroundStyle(AppTheme.ink)
@@ -216,6 +259,9 @@ private struct AttendeePickerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("完了") { dismiss() } }
+            }
+            .sheet(isPresented: $showingPurchaseSheet) {
+                PurchaseSheet()
             }
         }
     }

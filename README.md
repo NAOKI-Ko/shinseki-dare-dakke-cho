@@ -1,36 +1,108 @@
 # 親戚だれだっけ帳(仮称) — 和帳シリーズ第3作(v1+オンボーディング統合版)
 
 法事や帰省の前に、親戚の顔・名前・続柄をサッと確認できる帳面アプリ。
-初回起動時に自分の名前を登録すると、以後その人を起点にした
+初回起動時に自分の名前を登録し、珠のタップ・長押し操作を伝える
+2ページの案内を完了またはスキップすると、その人を起点にした
 **つながりマップ**(蓄積型・パン/ズーム可能なキャンバス)で
 関係を辿りながら可視化できる。
 
 ## 動作要件
 - Xcode 15以上 / iOS 17以上(SwiftData・PhotosUI使用)
-- 外部ライブラリなし・通信ゼロ(シリーズ共通方針)
+- 外部ライブラリなし・独自サーバーなし
+- 通信はStoreKit 2によるAppleとの商品取得・購入・復元時のみ発生
 
-## ファイル構成(9本)
+## 主なファイル構成
 | ファイル | 役割 |
 |---|---|
 | `ShinsekiChoApp.swift` | エントリ+和帳モダンテーマ(シリーズ共通) |
 | `Models.swift` | Person(isSelfフラグ含む) / Gathering + **RelationshipManager** |
-| `ContentView.swift` | 「自分」未登録ならOnboardingViewへ、登録済みなら3タブへ分岐 |
-| `OnboardingView.swift` | 初回起動時、自分の名前を登録する導入画面 |
+| `ContentView.swift` | 「自分」未登録ならオンボーディングへ、登録済みなら4タブへ分岐 |
+| `OnboardingView.swift` | 初回の自分登録と、タップ・長押し操作を伝える2ページの案内 |
 | `PersonListView.swift` | 人物一覧(顔写真グリッド)+登録フォーム |
 | `PersonDetailView.swift` | 人物詳細+**RelationEditorView**(配偶者・親・子の登録) |
 | `ConnectionMapView.swift` | **つながりマップ(核心機能)**。`FamilyGraphStore`(グラフ構築)+`FamilyGraphView`(パン/ズーム描画) |
 | `GatheringListView.swift` | 集まり(法事・帰省)の一覧・出席者管理 |
 | `SettingsView.swift` | 設定+「自分」の変更 |
+| `TrialManager.swift` | 7日間試用、StoreKit 2の購入・復元、購入シート |
+| `KeychainStore.swift` | Security.frameworkによる初回起動日時の端末内保存 |
 
 ## 起動フロー
 
 1. アプリ初回起動時、SwiftDataに`isSelf == true`の人物が存在しないため
-   `ContentView`は`OnboardingView`を表示する
+   `ContentView`は`OnboardingFlowView`を表示する
 2. 名前を入力して「はじめる」を押すと`isSelf: true`の`Person`が作成される
-3. `@Query`のリアクティブ性により、明示的な画面遷移コードなしで
-   自然に3タブ画面へ切り替わる
-4. 2回目以降の起動では、既に自分が存在するため直接タブ画面が表示される
-5. 設定タブの「変更する」から、後で自分を再指定することも可能
+3. 珠のタップ・長押し操作を説明する2ページの案内へ進む
+4. 「使いはじめる」または「スキップ」で4タブ画面へ切り替わる
+5. 2回目以降の起動では、既に自分が存在するため直接タブ画面が表示される
+6. 設定タブの「変更する」から、後で自分を再指定することも可能
+
+## 7日間無料トライアルと買い切り
+
+- 初回起動日時をSecurity.frameworkのKeychain
+  (`kSecClassGenericPassword`)へ保存する
+- 旧版の`UserDefaults`に`firstLaunchDate`がある場合は、その日時を
+  Keychainへ一度だけ移行し、移行成功後に旧データを削除する
+- 初回起動から7日未満は、人物・関係・集まりの追加／編集を利用できる
+- 7日経過後は追加／編集だけを停止し、保存済みデータの閲覧は常に可能
+- フルアクセスは非消費型App内課金。Product IDは
+  `com.naoki-ko.shinsekicho.fullaccess`
+- 購入状態は起動時・フォアグラウンド復帰時に、署名検証済みの
+  `Transaction.currentEntitlements`から再確認する
+- 購入価格の表示はStoreKitの`Product.displayPrice`を使用する。
+  商品未取得時のみ「600円」を仮表示する
+- 「購入を復元」は`AppStore.sync()`を実行し、機種変更後の購入状態を
+  Appleから再取得する
+
+> 7日間の試用は端末のKeychainで管理する独自試用期間であり、
+> App Store Connectのサブスクリプション向け無料トライアルではありません。
+> アプリを削除・再インストールしても同じ端末では日時を引き継ぎます。
+> `ThisDeviceOnly`属性のため別端末・バックアップには移行せず、端末を初期化して
+> Keychainが消去された場合は試用期間もリセットされます。
+
+### XcodeでのStoreKitテスト
+
+リポジトリ直下の`ShinsekiCho.storekit`に、同じProduct ID・非消費型・
+日本ストア600円のローカル商品を定義しています。XcodeでSchemeを編集し、
+Run > Options > StoreKit Configurationに`ShinsekiCho.storekit`を指定すると、
+Appleへの実課金なしで購入・復元を確認できます。ユニットテストでは
+StoreKit境界を差し替え、購入完了と新しいManagerからの復元を自動確認します。
+実トランザクションのローカル確認は、XcodeのSchemeでこの設定を有効にして
+実行してください。Xcode 26.5のiOS Simulatorでは、`xcodebuild`から
+`SKTestSession`を実行すると設定同期に失敗する既知事例があるため、IDEからの
+StoreKit Testingも併用します。
+
+## App Store Connectで手動登録する手順
+
+1. App Store Connectの「ビジネス」で、Account Holderが最新の
+   Paid Apps Agreementを承諾し、税務・銀行口座情報を完了します。
+2. 「マイApp」からBundle ID `com.naoki-ko.shinsekicho`のアプリを開き、
+   「収益化」>「App内課金」>「+」を選びます。
+3. 種類を「非消費型（Non-Consumable）」にし、次を入力して作成します。
+   - 参照名: `ShinsekiCho Full Access`（App Store上には表示されない管理名）
+   - Product ID: `com.naoki-ko.shinsekicho.fullaccess`
+   - Product IDと種類は作成後に変更できないため、作成前に再確認します。
+4. 日本語ローカリゼーションを追加します。
+   - 表示名: `親戚だれだっけ帳 フルアクセス`
+   - 説明: `人物・関係・集まりの追加と編集を引き続き利用できます。`
+5. 「価格スケジュール」>「価格を追加」で基準国／地域を日本にし、
+   日本の販売価格が600円になる価格ポイントを選択します。Appleの価格表は
+   改定されるため、「Tier番号」ではなく画面上の日本円600円を確認します。
+6. 「提供状況を設定」で販売する国／地域を選びます。まず日本だけで公開する
+   場合は日本のみを選択します。
+7. App Review用スクリーンショットとして、期限切れ後の購入シートが表示された
+   画面をアップロードし、審査メモに「7日間は端末内で試用を管理し、期限後も
+   既存データの閲覧は可能。非消費型購入で追加・編集を解除」と記載します。
+8. 最初のApp内課金は、対象アプリバージョンの「App内課金とサブスクリプション」
+   セクションに追加し、アプリ本体と一緒に審査へ提出します。
+9. SandboxテスターまたはTestFlightで、購入、キャンセル、承認待ち、復元を
+   実機確認します。商品メタデータの変更がSandboxへ反映されるまで最大1時間
+   程度かかる場合があります。
+
+Apple公式手順:
+[非消費型商品の作成](https://developer.apple.com/help/app-store-connect/manage-in-app-purchases/create-consumable-or-non-consumable-in-app-purchases/)、
+[価格の設定](https://developer.apple.com/help/app-store-connect/manage-in-app-purchases/set-a-price-for-an-in-app-purchase/)、
+[提供地域の設定](https://developer.apple.com/help/app-store-connect/manage-in-app-purchases/set-availability-for-in-app-purchases/)、
+[StoreKit 2](https://developer.apple.com/storekit/)
 
 ## 最重要確認事項が2つ
 
@@ -83,8 +155,10 @@ SwiftDataの自動inverseに頼らず、`setSpouse` / `addParentChild` 等の
    - アプリを初めて起動した状態(SwiftDataストアが空)では、タブバーが
      表示されず、オンボーディング画面(名前入力)が表示されること
    - 名前を入力せずに「はじめる」を押せないこと
-   - 名前を入力して「はじめる」を押すと、タブ画面(「親戚」タブ)に
-     自然に遷移すること
+   - 名前を入力して「はじめる」を押すと、珠のタップ・長押し操作を
+     説明する2ページの案内へ進むこと
+   - 「使いはじめる」または「スキップ」を押すと、タブ画面
+     (「親戚」タブ)に自然に遷移すること
    - アプリを再起動すると、オンボーディングは表示されず直接タブ画面が
      表示されること
    - 設定タブに、オンボーディングで入力した名前が「自分」として
