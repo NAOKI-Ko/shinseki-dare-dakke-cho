@@ -65,6 +65,77 @@ struct GraphGridPosition {
 struct GraphViewportTransform {
   let scale: CGFloat
   let offset: CGSize
+
+  /// 未変換のグラフ座標を、表示中のキャンバス座標へ変換する。
+  /// ノードとエッジの双方がこの同じ変換を参照する。
+  func applying(to point: CGPoint, around origin: CGPoint) -> CGPoint {
+    CGPoint(
+      x: origin.x + (point.x - origin.x) * scale + offset.width,
+      y: origin.y + (point.y - origin.y) * scale + offset.height
+    )
+  }
+
+  func removing(from point: CGPoint, around origin: CGPoint) -> CGPoint {
+    guard scale != 0 else { return origin }
+    return CGPoint(
+      x: origin.x + (point.x - origin.x - offset.width) / scale,
+      y: origin.y + (point.y - origin.y - offset.height) / scale
+    )
+  }
+}
+
+struct GraphEdgeAnchors {
+  let startCenter: CGPoint
+  let endCenter: CGPoint
+  let start: CGPoint
+  let end: CGPoint
+}
+
+/// ノードとエッジが共有する、パン・ズーム前のキャンバス座標。
+enum GraphCanvasGeometry {
+  static func beadCenter(
+    position: GraphGridPosition,
+    origin: CGPoint,
+    slotWidth: CGFloat,
+    levelHeight: CGFloat
+  ) -> CGPoint {
+    CGPoint(
+      x: origin.x + CGFloat(position.slot) * slotWidth,
+      y: origin.y + CGFloat(position.level) * levelHeight
+    )
+  }
+
+  static func edgeAnchors(
+    from startCenter: CGPoint,
+    to endCenter: CGPoint,
+    beadRadius: CGFloat
+  ) -> GraphEdgeAnchors {
+    let dx = endCenter.x - startCenter.x
+    let dy = endCenter.y - startCenter.y
+    let distance = hypot(dx, dy)
+    guard distance > beadRadius * 2, distance > 0 else {
+      return GraphEdgeAnchors(
+        startCenter: startCenter,
+        endCenter: endCenter,
+        start: startCenter,
+        end: endCenter
+      )
+    }
+    let unitX = dx / distance
+    let unitY = dy / distance
+    return GraphEdgeAnchors(
+      startCenter: startCenter,
+      endCenter: endCenter,
+      start: CGPoint(
+        x: startCenter.x + unitX * beadRadius,
+        y: startCenter.y + unitY * beadRadius
+      ),
+      end: CGPoint(
+        x: endCenter.x - unitX * beadRadius,
+        y: endCenter.y - unitY * beadRadius
+      )
+    )
+  }
 }
 
 /// 導入時の全体俯瞰と、完了時のフォーカス位置を軽量な算術だけで求める。
@@ -147,6 +218,11 @@ private struct QuickRelativeRequest: Identifiable {
   let kind: QuickRelationKind
 }
 
+private struct GraphNodeActionRequest: Identifiable {
+  let id = UUID()
+  let person: Person
+}
+
 enum QuickRelativeRegistrationError: LocalizedError {
   case emptyName
   case spouseLimit
@@ -199,7 +275,7 @@ enum QuickRelativeRegistration {
     case .parent:
       RelationshipManager.addParentChild(parent: newPerson, child: person)
     case .child:
-      RelationshipManager.addParentChild(parent: person, child: newPerson)
+      RelationshipManager.addChild(newPerson, to: person)
     }
 
     do {
@@ -488,7 +564,12 @@ struct FamilyGraphView: View {
   @State private var edgeProgress: [UUID: CGFloat] = [:]
   @State private var emphasizedPathEdges: Set<GraphEdgeEndpoints>?
   @State private var bouncingNodeID: PersistentModelIDBox?
+  @State private var nodeActionRequest: GraphNodeActionRequest?
   @State private var quickRelativeRequest: QuickRelativeRequest?
+  @State private var pendingQuickRelativeRequest: QuickRelativeRequest?
+  @State private var pendingDetailPerson: Person?
+  @State private var pendingPurchaseAfterNodeAction = false
+  @State private var suppressTapAfterLongPress = false
   @State private var showingPurchaseSheet = false
   @State private var pendingExpansionSourceID: PersistentModelIDBox?
   @State private var introAnimationToken = UUID()
@@ -503,95 +584,104 @@ struct FamilyGraphView: View {
   private let slotWidth: CGFloat = 108
   private let nodeSize: CGFloat = 68
   private let nodeCardWidth: CGFloat = 92
+  private let beadDiameter: CGFloat = 56
+  private let nodeCardHeight: CGFloat = 102
 
   var body: some View {
     GeometryReader { geo in
       // 親・本人・子の3世代すべてに、画面端と重ならないタップ余白を確保する。
       let origin = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+      let effectiveScale = scale * pinchDelta
+      let liveOffset = CGSize(
+        width: offset.width + dragDelta.width,
+        height: offset.height + dragDelta.height
+      )
+      let viewportTransform = GraphViewportTransform(
+        scale: effectiveScale,
+        offset: liveOffset
+      )
 
       ZStack {
         AppTheme.paper
 
-        // 接続線を1つの背景レイヤーへ隔離する。個々のShapeとノードが
-        // 同じ階層に混在しないため、後続改修でも前後関係が崩れない。
         ZStack {
-          ForEach(store.edges) { edge in
-            if let a = store.nodes[edge.from], let b = store.nodes[edge.to] {
-              let isEmphasized = emphasizedPathEdges?.contains(edge.endpoints) ?? true
-              let normalWidth: CGFloat = edge.kind == .spouse ? 2.5 : 1.5
-              GraphEdgeShape(
-                start: pixelPosition(a, origin: origin),
-                end: pixelPosition(b, origin: origin)
+          // 線とノードを同じ未変換座標系に置き、親レイヤーへ一度だけ
+          // パン・ズームを適用する。線だけ／ノードだけの二重変換を防ぐ。
+          ZStack {
+            ForEach(store.edges) { edge in
+              if let a = store.nodes[edge.from], let b = store.nodes[edge.to] {
+                let anchors = edgeAnchors(from: a, to: b, origin: origin)
+                let isEmphasized = emphasizedPathEdges?.contains(edge.endpoints) ?? true
+                let normalWidth: CGFloat = edge.kind == .spouse ? 2.5 : 1.5
+                GraphEdgeShape(start: anchors.start, end: anchors.end)
+                  .trim(from: 0, to: edgeProgress[edge.id] ?? 0)
+                  .stroke(
+                    store.branch(for: edge).color.opacity(isEmphasized ? 1 : 0.35),
+                    style: StrokeStyle(
+                      lineWidth: isEmphasized ? normalWidth : normalWidth * 0.5,
+                      lineCap: .round,
+                      lineJoin: .round
+                    )
+                  )
+                  .accessibilityHidden(true)
+              }
+            }
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .zIndex(GraphRenderLayer.edges.rawValue)
+          .accessibilityElement(children: .ignore)
+          .accessibilityIdentifier("connectionMap.edgeLayer")
+          .accessibilityValue("最背面")
+
+          // ノードは描画順でもzIndexでも接続線より前面に固定する。
+          ZStack {
+            ForEach(Array(store.nodes.values), id: \.id) { node in
+              let beadCenter = graphPosition(node, origin: origin)
+              GraphNodeCard(
+                person: node.person,
+                isSelf: node.person.persistentModelID == selfPerson.persistentModelID,
+                isFocused: node.person.persistentModelID == displayedPerson.persistentModelID,
+                isExpanded: expandedIDs.contains(node.id),
+                relationLabel: RelationLabeler.label(for: node.path),
+                branch: store.branch(for: node.id)
               )
-              .trim(from: 0, to: edgeProgress[edge.id] ?? 0)
-              .stroke(
-                store.branch(for: edge).color.opacity(isEmphasized ? 1 : 0.35),
-                style: StrokeStyle(
-                  lineWidth: isEmphasized ? normalWidth : normalWidth * 0.5,
-                  lineCap: .round,
-                  lineJoin: .round
+              .frame(width: nodeCardWidth, height: nodeCardHeight, alignment: .top)
+              .position(
+                x: beadCenter.x,
+                y: beadCenter.y + (nodeCardHeight - beadDiameter) / 2
+              )
+              // 登場・バウンスは珠の中心を固定した局所アニメーションに限定する。
+              .scaleEffect(
+                (visibleNodeIDs.contains(node.id) ? 1 : 0.3)
+                  * (bouncingNodeID == node.id ? 1.08 : 1),
+                anchor: UnitPoint(x: 0.5, y: (beadDiameter / 2) / nodeCardHeight)
+              )
+              .opacity(visibleNodeIDs.contains(node.id) ? 1 : 0)
+              .accessibilityElement(children: .ignore)
+              .accessibilityAddTraits(.isButton)
+              .accessibilityIdentifier("connectionMap.node.\(node.person.name)")
+              .accessibilityLabel(node.person.name)
+              .accessibilityValue(expandedIDs.contains(node.id) ? "展開済み" : "未展開")
+              .accessibilityAction {
+                expand(node)
+              }
+              .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.55, maximumDistance: 12)
+                  .onEnded { _ in
+                    presentNodeActions(for: node.person)
+                  }
                 )
-              )
-              .accessibilityHidden(true)
             }
           }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .zIndex(GraphRenderLayer.nodes.rawValue)
+          .accessibilityElement(children: .contain)
+          .accessibilityIdentifier("connectionMap.nodeLayer")
+          .accessibilityValue("最前面")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .zIndex(GraphRenderLayer.edges.rawValue)
-        .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier("connectionMap.edgeLayer")
-        .accessibilityValue("最背面")
-
-        // ノードは必ず接続線レイヤーの後に描画し、かつ高い層へ固定する。
-        ZStack {
-          ForEach(Array(store.nodes.values), id: \.id) { node in
-            GraphNodeCard(
-              person: node.person,
-              isSelf: node.person.persistentModelID == selfPerson.persistentModelID,
-              isFocused: node.person.persistentModelID == displayedPerson.persistentModelID,
-              isExpanded: expandedIDs.contains(node.id),
-              relationLabel: RelationLabeler.label(for: node.path),
-              branch: store.branch(for: node.id)
-            )
-            .frame(width: nodeCardWidth, height: nodeSize + 34)
-            .position(pixelPosition(node, origin: origin))
-            .scaleEffect(
-              scale * pinchDelta
-                * (visibleNodeIDs.contains(node.id) ? 1 : 0.3)
-                * (bouncingNodeID == node.id ? 1.08 : 1)
-            )
-            .opacity(visibleNodeIDs.contains(node.id) ? 1 : 0)
-            .accessibilityElement(children: .ignore)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityIdentifier("connectionMap.node.\(node.person.name)")
-            .accessibilityLabel(node.person.name)
-            .accessibilityValue(expandedIDs.contains(node.id) ? "展開済み" : "未展開")
-            .accessibilityAction {
-              expand(node)
-            }
-            .contextMenu {
-              Button {
-                onShowDetail(node.person)
-              } label: {
-                Label("詳細を見る", systemImage: "person.text.rectangle")
-              }
-              .accessibilityIdentifier("connectionMap.menu.detail")
-
-              if QuickRelativeRegistration.canAdd(.spouse, to: node.person) {
-                quickAddButton(kind: .spouse, person: node.person)
-              }
-              if QuickRelativeRegistration.canAdd(.parent, to: node.person) {
-                quickAddButton(kind: .parent, person: node.person)
-              }
-              quickAddButton(kind: .child, person: node.person)
-            }
-          }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .zIndex(GraphRenderLayer.nodes.rawValue)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("connectionMap.nodeLayer")
-        .accessibilityValue("最前面")
+        .scaleEffect(viewportTransform.scale, anchor: .center)
+        .offset(viewportTransform.offset)
       }
       // 子のノードButtonと同時に認識させ、単純なタップを奪わない。
       .simultaneousGesture(
@@ -599,7 +689,14 @@ struct FamilyGraphView: View {
           .updating($pinchDelta) { value, state, _ in state = value }
           .onEnded { value in
             cancelIntroAnimation()
-            scale = min(max(scale * value, 0.4), 2.5)
+            let proposedScale = scale * value
+            if proposedScale <= 0.45 {
+              scale = 0.4
+            } else if proposedScale >= 2.4 {
+              scale = 2.5
+            } else {
+              scale = proposedScale
+            }
           }
       )
       .simultaneousGesture(
@@ -611,8 +708,16 @@ struct FamilyGraphView: View {
           }
           .onEnded { value in
             cancelIntroAnimation()
+            if suppressTapAfterLongPress {
+              suppressTapAfterLongPress = false
+              return
+            }
             if hypot(value.translation.width, value.translation.height) < 10 {
-              if let node = node(at: value.location, origin: origin) {
+              if let node = node(
+                at: value.location,
+                origin: origin,
+                transform: viewportTransform
+              ) {
                 expand(node)
               }
             } else {
@@ -656,8 +761,18 @@ struct FamilyGraphView: View {
     }
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(canvasIdentifier)
-    .accessibilityValue(introPhase)
+    .accessibilityValue(canvasAccessibilityValue)
     .onDisappear { cancelIntroAnimation() }
+    .sheet(
+      item: $nodeActionRequest,
+      onDismiss: performPendingNodeAction
+    ) { request in
+      GraphNodeActionSheet(
+        person: request.person,
+        onDetail: { queueDetail(for: request.person) },
+        onAdd: { queueQuickAdd($0, for: request.person) }
+      )
+    }
     .sheet(
       item: $quickRelativeRequest,
       onDismiss: expandPendingQuickRelative
@@ -692,15 +807,33 @@ struct FamilyGraphView: View {
     offset = .zero
   }
 
-  private func pixelPosition(_ node: GraphNode, origin: CGPoint) -> CGPoint {
-    let effectiveScale = scale * pinchDelta
-    return CGPoint(
-      x: origin.x
-        + CGFloat(node.slot) * slotWidth * effectiveScale
-        + offset.width + dragDelta.width,
-      y: origin.y
-        + CGFloat(node.level) * levelHeight * effectiveScale
-        + offset.height + dragDelta.height
+  private var canvasAccessibilityValue: String {
+    #if DEBUG
+      if ProcessInfo.processInfo.arguments.contains("-ui-testing-family-graph-ux") {
+        return "\(introPhase)|scale:\(String(format: "%.2f", scale * pinchDelta))"
+      }
+    #endif
+    return introPhase
+  }
+
+  private func graphPosition(_ node: GraphNode, origin: CGPoint) -> CGPoint {
+    GraphCanvasGeometry.beadCenter(
+      position: GraphGridPosition(level: node.level, slot: node.slot),
+      origin: origin,
+      slotWidth: slotWidth,
+      levelHeight: levelHeight
+    )
+  }
+
+  private func edgeAnchors(
+    from first: GraphNode,
+    to second: GraphNode,
+    origin: CGPoint
+  ) -> GraphEdgeAnchors {
+    GraphCanvasGeometry.edgeAnchors(
+      from: graphPosition(first, origin: origin),
+      to: graphPosition(second, origin: origin),
+      beadRadius: beadDiameter / 2
     )
   }
 
@@ -720,18 +853,43 @@ struct FamilyGraphView: View {
     onSelect(node.person)
   }
 
-  @ViewBuilder
-  private func quickAddButton(kind: QuickRelationKind, person: Person) -> some View {
-    Button {
-      if trialManager.canEdit {
-        quickRelativeRequest = QuickRelativeRequest(person: person, kind: kind)
-      } else {
+  private func presentNodeActions(for person: Person) {
+    suppressTapAfterLongPress = true
+    nodeActionRequest = GraphNodeActionRequest(person: person)
+  }
+
+  private func queueDetail(for person: Person) {
+    pendingDetailPerson = person
+    nodeActionRequest = nil
+  }
+
+  private func queueQuickAdd(_ kind: QuickRelationKind, for person: Person) {
+    if trialManager.canEdit {
+      pendingQuickRelativeRequest = QuickRelativeRequest(person: person, kind: kind)
+    } else {
+      pendingPurchaseAfterNodeAction = true
+    }
+    nodeActionRequest = nil
+  }
+
+  private func performPendingNodeAction() {
+    suppressTapAfterLongPress = false
+    let detail = pendingDetailPerson
+    let quickRequest = pendingQuickRelativeRequest
+    let showPurchase = pendingPurchaseAfterNodeAction
+    pendingDetailPerson = nil
+    pendingQuickRelativeRequest = nil
+    pendingPurchaseAfterNodeAction = false
+
+    DispatchQueue.main.async {
+      if let detail {
+        onShowDetail(detail)
+      } else if let quickRequest {
+        quickRelativeRequest = quickRequest
+      } else if showPurchase {
         showingPurchaseSheet = true
       }
-    } label: {
-      Label(kind.menuTitle, systemImage: kind.systemImage)
     }
-    .accessibilityIdentifier("connectionMap.menu.\(kind.rawValue)")
   }
 
   private func expandPendingQuickRelative() {
@@ -851,16 +1009,110 @@ struct FamilyGraphView: View {
     }
   }
 
-  private func node(at location: CGPoint, origin: CGPoint) -> GraphNode? {
-    let hitRadius = max(44, nodeSize * scale * pinchDelta / 2)
+  private func node(
+    at location: CGPoint,
+    origin: CGPoint,
+    transform: GraphViewportTransform
+  ) -> GraphNode? {
+    let graphLocation = transform.removing(from: location, around: origin)
+    let hitRadius = max(44 / max(transform.scale, 0.01), beadDiameter / 2)
     return store.nodes.values
       .map { node in
-        let point = pixelPosition(node, origin: origin)
-        return (node, hypot(point.x - location.x, point.y - location.y))
+        let point = graphPosition(node, origin: origin)
+        return (node, hypot(point.x - graphLocation.x, point.y - graphLocation.y))
       }
       .filter { $0.1 <= hitRadius }
       .min { $0.1 < $1.1 }?
       .0
+  }
+}
+
+private struct GraphNodeActionSheet: View {
+  let person: Person
+  let onDetail: () -> Void
+  let onAdd: (QuickRelationKind) -> Void
+
+  private var availableKinds: [QuickRelationKind] {
+    [QuickRelationKind.spouse, .parent, .child].filter {
+      QuickRelativeRegistration.canAdd($0, to: person)
+    }
+  }
+
+  private var sheetHeight: CGFloat {
+    100 + CGFloat(1 + availableKinds.count) * 48
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      Capsule()
+        .fill(AppTheme.ruleStrong)
+        .frame(width: 34, height: 4)
+        .padding(.top, 10)
+        .padding(.bottom, 14)
+
+      Text(person.name)
+        .font(.minchoTitle(19, relativeTo: .headline))
+        .foregroundStyle(AppTheme.ink)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
+
+      actionButton(
+        title: "詳細を見る",
+        systemImage: "person.text.rectangle",
+        identifier: "connectionMap.menu.detail",
+        action: onDetail
+      )
+
+      ForEach(availableKinds, id: \.rawValue) { kind in
+        actionButton(
+          title: kind.menuTitle,
+          systemImage: kind.systemImage,
+          identifier: "connectionMap.menu.\(kind.rawValue)"
+        ) {
+          onAdd(kind)
+        }
+      }
+    }
+    .padding(.bottom, 16)
+    .background(AppTheme.paper)
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("connectionMap.actionSheet")
+    .presentationDetents([.height(sheetHeight)])
+    .presentationDragIndicator(.hidden)
+    .presentationBackground(AppTheme.paper)
+  }
+
+  private func actionButton(
+    title: String,
+    systemImage: String,
+    identifier: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      HStack(spacing: 12) {
+        Image(systemName: systemImage)
+          .frame(width: 22)
+          .foregroundStyle(AppTheme.ai)
+        Text(title)
+          .foregroundStyle(AppTheme.ink)
+        Spacer()
+        Image(systemName: "chevron.right")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(AppTheme.inkSoft)
+      }
+      .padding(.horizontal, 20)
+      .frame(minHeight: 48)
+      .background(AppTheme.paperRaised)
+    }
+    .buttonStyle(.plain)
+    .overlay(alignment: .bottom) {
+      Rectangle()
+        .fill(AppTheme.rule)
+        .frame(height: 1)
+        .padding(.leading, 54)
+    }
+    .accessibilityIdentifier(identifier)
   }
 }
 

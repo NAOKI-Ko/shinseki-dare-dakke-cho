@@ -452,13 +452,60 @@ final class FamilyGraphStoreTests: XCTestCase {
 
     XCTAssertEqual(child.name, "その場で会った子")
     XCTAssertTrue(fixture.a.children.contains { key($0) == key(child) })
+    XCTAssertTrue(fixture.c.children.contains { key($0) == key(child) })
     XCTAssertTrue(child.parents.contains { key($0) == key(fixture.a) })
+    XCTAssertTrue(child.parents.contains { key($0) == key(fixture.c) })
+    XCTAssertEqual(Set(child.parents.map { key($0) }), Set([key(fixture.a), key(fixture.c)]))
     XCTAssertEqual(child.kana, "")
     XCTAssertEqual(child.relationNote, "")
     XCTAssertNil(child.photoData)
     XCTAssertEqual(child.phone, "")
     XCTAssertEqual(child.email, "")
     XCTAssertEqual(child.memo, "")
+  }
+
+  func testGraphCanvasUsesOneTransformForNodeAndEdgeCentersAtSupportedScales() {
+    let origin = CGPoint(x: 200, y: 300)
+    let rawNodeCenter = GraphCanvasGeometry.beadCenter(
+      position: GraphGridPosition(level: -2, slot: 3),
+      origin: origin,
+      slotWidth: 108,
+      levelHeight: 120
+    )
+    let otherCenter = GraphCanvasGeometry.beadCenter(
+      position: GraphGridPosition(level: 1, slot: -1),
+      origin: origin,
+      slotWidth: 108,
+      levelHeight: 120
+    )
+    let anchors = GraphCanvasGeometry.edgeAnchors(
+      from: rawNodeCenter,
+      to: otherCenter,
+      beadRadius: 28
+    )
+
+    for scale in [CGFloat(0.4), 0.6, 1.0, 2.5] {
+      let transform = GraphViewportTransform(
+        scale: scale,
+        offset: CGSize(width: 37, height: -19)
+      )
+      let transformedNodeCenter = transform.applying(to: rawNodeCenter, around: origin)
+      let transformedEdgeCenter = transform.applying(to: anchors.startCenter, around: origin)
+
+      XCTAssertEqual(transformedNodeCenter.x, transformedEdgeCenter.x, accuracy: 0.0001)
+      XCTAssertEqual(transformedNodeCenter.y, transformedEdgeCenter.y, accuracy: 0.0001)
+      XCTAssertEqual(
+        hypot(
+          transform.applying(to: anchors.start, around: origin).x - transformedNodeCenter.x,
+          transform.applying(to: anchors.start, around: origin).y - transformedNodeCenter.y
+        ),
+        28 * scale,
+        accuracy: 0.0001
+      )
+      let restored = transform.removing(from: transformedNodeCenter, around: origin)
+      XCTAssertEqual(restored.x, rawNodeCenter.x, accuracy: 0.0001)
+      XCTAssertEqual(restored.y, rawNodeCenter.y, accuracy: 0.0001)
+    }
   }
 
   func testQuickRegistrationMenuAndSaveBothEnforceSpouseAndParentLimits() throws {

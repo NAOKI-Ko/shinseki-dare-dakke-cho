@@ -34,6 +34,24 @@ final class RelationshipManagerTests: XCTestCase {
         XCTAssertEqual(child.parents.first?.persistentModelID, parent.persistentModelID)
     }
 
+    func testAddChildConnectsBothSpousesWithoutDuplicates() throws {
+        let container = try makeContainer()
+        let a = Person(name: "A")
+        let b = Person(name: "B")
+        let child = Person(name: "C")
+        try insert([a, b, child], into: container.mainContext)
+        RelationshipManager.setSpouse(a, b)
+
+        RelationshipManager.addChild(child, to: a)
+        RelationshipManager.addChild(child, to: a)
+
+        XCTAssertEqual(a.children.filter { $0.persistentModelID == child.persistentModelID }.count, 1)
+        XCTAssertEqual(b.children.filter { $0.persistentModelID == child.persistentModelID }.count, 1)
+        XCTAssertEqual(child.parents.filter { $0.persistentModelID == a.persistentModelID }.count, 1)
+        XCTAssertEqual(child.parents.filter { $0.persistentModelID == b.persistentModelID }.count, 1)
+        XCTAssertEqual(Set(child.parents.map(\.persistentModelID)), Set([a.persistentModelID, b.persistentModelID]))
+    }
+
     func testSetSpouseReflectsBothDirectionsAndClearsOldSpouses() throws {
         let container = try makeContainer()
         let a = Person(name: "A")

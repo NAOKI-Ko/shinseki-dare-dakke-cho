@@ -157,6 +157,15 @@ enum RelationshipManager {
         }
     }
 
+    /// personに配偶者がいる場合、その2人を共同の親としてchildへ結びつける。
+    /// 既存の親子関係はaddParentChild内で重複排除される。
+    static func addChild(_ child: Person, to person: Person) {
+        addParentChild(parent: person, child: child)
+        if let spouse = person.spouse {
+            addParentChild(parent: spouse, child: child)
+        }
+    }
+
     /// 親子関係を解消する
     static func removeParentChild(parent: Person, child: Person) {
         parent.children.removeAll { $0.persistentModelID == child.persistentModelID }

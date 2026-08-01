@@ -351,7 +351,7 @@ struct RelationEditorView: View {
                         ForEach(candidates.filter { !person.children.contains($0) }) { candidate in
                             Button(candidate.name) {
                                 performEdit {
-                                    RelationshipManager.addParentChild(parent: person, child: candidate)
+                                    RelationshipManager.addChild(candidate, to: person)
                                 }
                             }
                         }

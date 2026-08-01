@@ -624,6 +624,66 @@ final class ShinsekiChoUITests: XCTestCase {
     sleep(2)
   }
 
+  func testFamilyGraphUXVisualEvidenceAcrossZoomAndLongPress() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-family-graph-ux"]
+    )
+    XCTAssertTrue(app.navigationBars["つながり"].waitForExistence(timeout: 5))
+    let canvas = element("connectionMap.home.canvas", in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+
+    func waitForScale(_ expected: String) {
+      let predicate = NSPredicate(format: "value CONTAINS %@", "scale:\(expected)")
+      let expectation = XCTNSPredicateExpectation(predicate: predicate, object: canvas)
+      XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 3), .completed)
+    }
+
+    waitForScale("1.00")
+    canvas.pinch(withScale: 0.4, velocity: -1)
+    waitForScale("0.40")
+    keepScreenshot(app, name: "FamilyGraphUX_01_zoom_0_4x")
+
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale("1.00")
+    keepScreenshot(app, name: "FamilyGraphUX_02_zoom_1_0x")
+
+    canvas.pinch(withScale: 2.5, velocity: 1)
+    waitForScale("2.50")
+    keepScreenshot(app, name: "FamilyGraphUX_03_zoom_2_5x")
+
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale("1.00")
+    let father = element("connectionMap.node.山田 一郎", in: app)
+    XCTAssertTrue(father.waitForExistence(timeout: 5))
+    XCTAssertEqual(father.value as? String, "未展開")
+    father.press(forDuration: 1.2)
+    XCTAssertTrue(element("connectionMap.actionSheet", in: app).waitForExistence(timeout: 3))
+    XCTAssertEqual(father.value as? String, "未展開")
+    keepScreenshot(app, name: "FamilyGraphUX_04_long_press_action_sheet")
+
+    app.buttons["connectionMap.menu.child"].tap()
+    let nameField = element("quickRelative.name", in: app)
+    XCTAssertTrue(nameField.waitForExistence(timeout: 3))
+    nameField.typeText("共同の子 UX")
+    app.buttons["quickRelative.save"].tap()
+
+    let newNode = element("connectionMap.node.共同の子 UX", in: app)
+    XCTAssertTrue(newNode.waitForExistence(timeout: 5))
+    let mother = element("connectionMap.node.山田 花子", in: app)
+    XCTAssertTrue(mother.waitForExistence(timeout: 5))
+    mother.tap()
+    XCTAssertTrue(newNode.waitForExistence(timeout: 3))
+    canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.55))
+      .press(
+        forDuration: 0.05,
+        thenDragTo: canvas.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.45, dy: 0.55)
+        )
+      )
+    keepScreenshot(app, name: "FamilyGraphUX_05_joint_child_after_add")
+  }
+
   func testMapContextMenuDetailNavigationAndAvailableParentAction() {
     let app = launch(seed: true)
     XCTAssertTrue(app.navigationBars["つながり"].waitForExistence(timeout: 5))
