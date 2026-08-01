@@ -489,8 +489,12 @@ final class ShinsekiChoUITests: XCTestCase {
     let searchKey = app.keyboards.buttons["検索"]
     if searchKey.exists {
       searchKey.tap()
+    } else if app.keyboards.firstMatch.exists {
+      // iOSの言語・キーボード構成によってReturnキーのラベルが変わるため、
+      // 検索フィールドへReturnを直接送り、テストが環境依存で止まらないようにする。
+      searchField.typeText("\n")
     }
-    XCTAssertFalse(app.keyboards.firstMatch.exists)
+    XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
     keepScreenshot(app, name: "Home_03_検索で佐藤に絞り込み_ライト")
 
     // クリアすると、検索前に選んでいたつながりへ戻る。
@@ -692,8 +696,10 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(element("purchase.sheet", in: app).waitForExistence(timeout: 5))
     let buyButton = app.buttons["purchase.buyButton"]
     XCTAssertTrue(buyButton.exists)
-    XCTAssertTrue(buyButton.label.contains("600円"))
+    XCTAssertTrue(app.buttons["purchase.retryProductButton"].waitForExistence(timeout: 5))
+    XCTAssertTrue(buyButton.label.contains("商品情報を読み込んで購入"))
     XCTAssertTrue(app.buttons["purchase.restoreButton"].exists)
+    XCTAssertTrue(element("purchase.message", in: app).exists)
     keepScreenshot(app, name: "試用期間終了_購入シート_ライト")
     app.buttons["閉じる"].tap()
 

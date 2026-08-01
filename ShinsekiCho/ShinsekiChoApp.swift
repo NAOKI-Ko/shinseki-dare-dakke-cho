@@ -56,7 +56,8 @@ struct ShinsekiChoApp: App {
                 )
             }
             let isPurchasedUITest = arguments.contains("-ui-testing-purchased")
-            if isUITesting {
+            let usesLiveStoreKit = arguments.contains("-ui-testing-live-storekit")
+            if isUITesting, !usesLiveStoreKit {
                 _trialManager = State(
                     initialValue: TrialManager(
                         entitlementChecker: { isPurchasedUITest },

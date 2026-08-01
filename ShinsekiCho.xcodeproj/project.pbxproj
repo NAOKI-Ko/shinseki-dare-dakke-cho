@@ -1,11 +1,13 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
+	classes = {
+	};
 	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B0D3F1A2301DB06900523A22 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B0D3F1A1301DB06900523A22 /* StoreKit.framework */; };
 		C00000000000000000000001 /* ShinsekiChoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000001 /* ShinsekiChoApp.swift */; };
 		C00000000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Models.swift */; };
 		C00000000000000000000003 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000003 /* ContentView.swift */; };
@@ -29,8 +31,20 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		J00000000000000000000001 = {isa = PBXContainerItemProxy; containerPortal = E00000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = F00000000000000000000001; remoteInfo = ShinsekiCho; };
-		J00000000000000000000002 = {isa = PBXContainerItemProxy; containerPortal = E00000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = F00000000000000000000001; remoteInfo = ShinsekiCho; };
+		J00000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E00000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F00000000000000000000001;
+			remoteInfo = ShinsekiCho;
+		};
+		J00000000000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E00000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F00000000000000000000001;
+			remoteInfo = ShinsekiCho;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -58,15 +72,44 @@
 		B00000000000000000000001 /* ShinsekiCho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ShinsekiCho.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000002 /* ShinsekiChoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShinsekiChoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000003 /* ShinsekiChoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShinsekiChoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B0D3F1A1301DB06900523A22 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		G00000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000018 /* Security.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
-		G00000000000000000000005 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		G00000000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		G00000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000018 /* Security.framework in Frameworks */,
+				B0D3F1A2301DB06900523A22 /* StoreKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		G00000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		G00000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		B0D3F1A0301DB06900523A22 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				B0D3F1A1301DB06900523A22 /* StoreKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		D00000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
@@ -75,48 +118,115 @@
 				D00000000000000000000003 /* ShinsekiCho */,
 				D00000000000000000000004 /* ShinsekiChoTests */,
 				D00000000000000000000005 /* ShinsekiChoUITests */,
+				B0D3F1A0301DB06900523A22 /* Frameworks */,
 				D00000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		D00000000000000000000002 /* Products */ = {isa = PBXGroup; children = (B00000000000000000000001 /* ShinsekiCho.app */, B00000000000000000000002 /* ShinsekiChoTests.xctest */, B00000000000000000000003 /* ShinsekiChoUITests.xctest */); name = Products; sourceTree = "<group>"; };
-		D00000000000000000000003 /* ShinsekiCho */ = {isa = PBXGroup; children = (A00000000000000000000001, A00000000000000000000002, A00000000000000000000003, A00000000000000000000020, A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000014, A00000000000000000000015, A00000000000000000000018, A00000000000000000000008, A00000000000000000000009, A00000000000000000000021, A00000000000000000000013); path = ShinsekiCho; sourceTree = "<group>"; };
-		D00000000000000000000004 /* ShinsekiChoTests */ = {isa = PBXGroup; children = (A00000000000000000000010, A00000000000000000000011, A00000000000000000000016); path = ShinsekiChoTests; sourceTree = "<group>"; };
-		D00000000000000000000005 /* ShinsekiChoUITests */ = {isa = PBXGroup; children = (A00000000000000000000012); path = ShinsekiChoUITests; sourceTree = "<group>"; };
+		D00000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000001 /* ShinsekiCho.app */,
+				B00000000000000000000002 /* ShinsekiChoTests.xctest */,
+				B00000000000000000000003 /* ShinsekiChoUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000003 /* ShinsekiCho */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000001 /* ShinsekiChoApp.swift */,
+				A00000000000000000000002 /* Models.swift */,
+				A00000000000000000000003 /* ContentView.swift */,
+				A00000000000000000000020 /* HomeView.swift */,
+				A00000000000000000000004 /* OnboardingView.swift */,
+				A00000000000000000000005 /* PersonListView.swift */,
+				A00000000000000000000006 /* PersonDetailView.swift */,
+				A00000000000000000000007 /* ConnectionMapView.swift */,
+				A00000000000000000000014 /* RelationLabeler.swift */,
+				A00000000000000000000015 /* TrialManager.swift */,
+				A00000000000000000000018 /* KeychainStore.swift */,
+				A00000000000000000000008 /* GatheringListView.swift */,
+				A00000000000000000000009 /* SettingsView.swift */,
+				A00000000000000000000021 /* Assets.xcassets */,
+				A00000000000000000000013 /* Info.plist */,
+			);
+			path = ShinsekiCho;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000004 /* ShinsekiChoTests */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000010 /* RelationshipManagerTests.swift */,
+				A00000000000000000000011 /* FamilyGraphStoreTests.swift */,
+				A00000000000000000000016 /* TrialManagerTests.swift */,
+			);
+			path = ShinsekiChoTests;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000005 /* ShinsekiChoUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000012 /* ShinsekiChoUITests.swift */,
+			);
+			path = ShinsekiChoUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		F00000000000000000000001 /* ShinsekiCho */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = I00000000000000000000002;
-			buildPhases = (G00000000000000000000001, G00000000000000000000002, G00000000000000000000003);
-			buildRules = ();
-			dependencies = ();
+			buildConfigurationList = I00000000000000000000002 /* Build configuration list for PBXNativeTarget "ShinsekiCho" */;
+			buildPhases = (
+				G00000000000000000000001 /* Sources */,
+				G00000000000000000000002 /* Frameworks */,
+				G00000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = ShinsekiCho;
 			productName = ShinsekiCho;
-			productReference = B00000000000000000000001;
+			productReference = B00000000000000000000001 /* ShinsekiCho.app */;
 			productType = "com.apple.product-type.application";
 		};
 		F00000000000000000000002 /* ShinsekiChoTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = I00000000000000000000003;
-			buildPhases = (G00000000000000000000004, G00000000000000000000005, G00000000000000000000006);
-			buildRules = ();
-			dependencies = (K00000000000000000000001);
+			buildConfigurationList = I00000000000000000000003 /* Build configuration list for PBXNativeTarget "ShinsekiChoTests" */;
+			buildPhases = (
+				G00000000000000000000004 /* Sources */,
+				G00000000000000000000005 /* Frameworks */,
+				G00000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				K00000000000000000000001 /* PBXTargetDependency */,
+			);
 			name = ShinsekiChoTests;
 			productName = ShinsekiChoTests;
-			productReference = B00000000000000000000002;
+			productReference = B00000000000000000000002 /* ShinsekiChoTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		F00000000000000000000003 /* ShinsekiChoUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = I00000000000000000000004;
-			buildPhases = (G00000000000000000000007, G00000000000000000000008, G00000000000000000000009);
-			buildRules = ();
-			dependencies = (K00000000000000000000002);
+			buildConfigurationList = I00000000000000000000004 /* Build configuration list for PBXNativeTarget "ShinsekiChoUITests" */;
+			buildPhases = (
+				G00000000000000000000007 /* Sources */,
+				G00000000000000000000008 /* Frameworks */,
+				G00000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				K00000000000000000000002 /* PBXTargetDependency */,
+			);
 			name = ShinsekiChoUITests;
 			productName = ShinsekiChoUITests;
-			productReference = B00000000000000000000003;
+			productReference = B00000000000000000000003 /* ShinsekiChoUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -129,57 +239,295 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
-					F00000000000000000000001 = {CreatedOnToolsVersion = 26.6;};
-					F00000000000000000000002 = {CreatedOnToolsVersion = 26.6; TestTargetID = F00000000000000000000001;};
-					F00000000000000000000003 = {CreatedOnToolsVersion = 26.6; TestTargetID = F00000000000000000000001;};
+					F00000000000000000000001 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					F00000000000000000000002 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = F00000000000000000000001;
+					};
+					F00000000000000000000003 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = F00000000000000000000001;
+					};
 				};
 			};
-			buildConfigurationList = I00000000000000000000001;
+			buildConfigurationList = I00000000000000000000001 /* Build configuration list for PBXProject "ShinsekiCho" */;
 			compatibilityVersion = "Xcode 15.0";
 			developmentRegion = ja;
 			hasScannedForEncodings = 0;
-			knownRegions = (ja, Base);
+			knownRegions = (
+				ja,
+				Base,
+			);
 			mainGroup = D00000000000000000000001;
-			productRefGroup = D00000000000000000000002;
+			productRefGroup = D00000000000000000000002 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (F00000000000000000000001, F00000000000000000000002, F00000000000000000000003);
+			targets = (
+				F00000000000000000000001 /* ShinsekiCho */,
+				F00000000000000000000002 /* ShinsekiChoTests */,
+				F00000000000000000000003 /* ShinsekiChoUITests */,
+			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		G00000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000020 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		G00000000000000000000006 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000016 /* ShinsekiCho.storekit in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		G00000000000000000000009 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		G00000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000020 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		G00000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000016 /* ShinsekiCho.storekit in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		G00000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		G00000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000001, C00000000000000000000002, C00000000000000000000003, C00000000000000000000019, C00000000000000000000004, C00000000000000000000005, C00000000000000000000006, C00000000000000000000007, C00000000000000000000013, C00000000000000000000014, C00000000000000000000017, C00000000000000000000008, C00000000000000000000009); runOnlyForDeploymentPostprocessing = 0; };
-		G00000000000000000000004 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000010, C00000000000000000000011, C00000000000000000000015); runOnlyForDeploymentPostprocessing = 0; };
-		G00000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000012); runOnlyForDeploymentPostprocessing = 0; };
+		G00000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000001 /* ShinsekiChoApp.swift in Sources */,
+				C00000000000000000000002 /* Models.swift in Sources */,
+				C00000000000000000000003 /* ContentView.swift in Sources */,
+				C00000000000000000000019 /* HomeView.swift in Sources */,
+				C00000000000000000000004 /* OnboardingView.swift in Sources */,
+				C00000000000000000000005 /* PersonListView.swift in Sources */,
+				C00000000000000000000006 /* PersonDetailView.swift in Sources */,
+				C00000000000000000000007 /* ConnectionMapView.swift in Sources */,
+				C00000000000000000000013 /* RelationLabeler.swift in Sources */,
+				C00000000000000000000014 /* TrialManager.swift in Sources */,
+				C00000000000000000000017 /* KeychainStore.swift in Sources */,
+				C00000000000000000000008 /* GatheringListView.swift in Sources */,
+				C00000000000000000000009 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		G00000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000010 /* RelationshipManagerTests.swift in Sources */,
+				C00000000000000000000011 /* FamilyGraphStoreTests.swift in Sources */,
+				C00000000000000000000015 /* TrialManagerTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		G00000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000012 /* ShinsekiChoUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		K00000000000000000000001 = {isa = PBXTargetDependency; target = F00000000000000000000001; targetProxy = J00000000000000000000001; };
-		K00000000000000000000002 = {isa = PBXTargetDependency; target = F00000000000000000000001; targetProxy = J00000000000000000000002; };
+		K00000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F00000000000000000000001 /* ShinsekiCho */;
+			targetProxy = J00000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		K00000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F00000000000000000000001 /* ShinsekiCho */;
+			targetProxy = J00000000000000000000002 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		H00000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_OPTIMIZATION_LEVEL = 0; ONLY_ACTIVE_ARCH = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone";}; name = Debug; };
-		H00000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; GCC_C_LANGUAGE_STANDARD = gnu17; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; VALIDATE_PRODUCT = YES;}; name = Release; };
-		H00000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = ShinsekiCho/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekicho"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;}; name = Debug; };
-		H00000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = ShinsekiCho/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekicho"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;}; name = Release; };
-		H00000000000000000000005 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekichoTests"; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ShinsekiCho.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ShinsekiCho";}; name = Debug; };
-		H00000000000000000000006 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekichoTests"; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ShinsekiCho.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ShinsekiCho";}; name = Release; };
-		H00000000000000000000007 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekichoUITests"; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = ShinsekiCho;}; name = Debug; };
-		H00000000000000000000008 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekichoUITests"; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = ShinsekiCho;}; name = Release; };
+		H00000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		H00000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		H00000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = 67BCCSD863;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShinsekiCho/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekicho";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		H00000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = 67BCCSD863;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShinsekiCho/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekicho";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		H00000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekichoTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ShinsekiCho.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ShinsekiCho";
+			};
+			name = Debug;
+		};
+		H00000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekichoTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ShinsekiCho.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ShinsekiCho";
+			};
+			name = Release;
+		};
+		H00000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekichoUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = ShinsekiCho;
+			};
+			name = Debug;
+		};
+		H00000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.naoki-ko.shinsekichoUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = ShinsekiCho;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		I00000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (H00000000000000000000001, H00000000000000000000002); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		I00000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (H00000000000000000000003, H00000000000000000000004); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		I00000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (H00000000000000000000005, H00000000000000000000006); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		I00000000000000000000004 = {isa = XCConfigurationList; buildConfigurations = (H00000000000000000000007, H00000000000000000000008); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		I00000000000000000000001 /* Build configuration list for PBXProject "ShinsekiCho" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				H00000000000000000000001 /* Debug */,
+				H00000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		I00000000000000000000002 /* Build configuration list for PBXNativeTarget "ShinsekiCho" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				H00000000000000000000003 /* Debug */,
+				H00000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		I00000000000000000000003 /* Build configuration list for PBXNativeTarget "ShinsekiChoTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				H00000000000000000000005 /* Debug */,
+				H00000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		I00000000000000000000004 /* Build configuration list for PBXNativeTarget "ShinsekiChoUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				H00000000000000000000007 /* Debug */,
+				H00000000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 	};
 	rootObject = E00000000000000000000001 /* Project object */;

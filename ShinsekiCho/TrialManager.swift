@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import StoreKit
 import SwiftUI
 
@@ -61,19 +62,38 @@ enum TrialPurchaseOutcome {
     case userCancelled
 }
 
+enum TrialProductAvailability: Equatable {
+    case idle
+    case loading
+    case available
+    case unavailable
+}
+
 @MainActor
 @Observable
 final class TrialManager {
-    nonisolated static let productID = "com.naoki-ko.shinsekicho.fullaccess"
+    nonisolated static let productID = "com.naokiko.shinsekicho.fullaccess"
     static let firstLaunchDateKey = "firstLaunchDate"
 
     private(set) var status: TrialStatus
     private(set) var product: Product?
+    private(set) var productAvailability: TrialProductAvailability = .idle
     private(set) var isProcessing = false
     var message: String?
 
     var canEdit: Bool { status.allowsEditing }
-    var displayPrice: String { product?.displayPrice ?? "600円" }
+    var displayPrice: String? { product?.displayPrice }
+    var purchaseButtonText: String {
+        if let displayPrice {
+            return "今すぐ購入（\(displayPrice)）して全機能を使う"
+        }
+        switch productAvailability {
+        case .loading:
+            return "商品情報を確認しています…"
+        case .idle, .available, .unavailable:
+            return "商品情報を読み込んで購入"
+        }
+    }
 
     private let firstLaunchDate: Date
     private let now: () -> Date
@@ -82,6 +102,17 @@ final class TrialManager {
     private let purchasePerformer: ((Product?) async throws -> TrialPurchaseOutcome)?
     private let restorePerformer: () async throws -> Void
     private var updatesTask: Task<Void, Never>?
+    private var productLoadTask: Task<ProductLoadResult, Never>?
+
+    private enum ProductLoadResult {
+        case success(Product?)
+        case failure(String)
+    }
+
+    private static let logger = Logger(
+        subsystem: "com.naoki-ko.shinsekicho",
+        category: "StoreKit"
+    )
 
     init(
         defaults: UserDefaults = .standard,
@@ -119,7 +150,7 @@ final class TrialManager {
 
     func prepare() async {
         await refreshEntitlement()
-        await loadProduct()
+        _ = await loadProduct()
         startListeningForTransactions()
     }
 
@@ -135,7 +166,7 @@ final class TrialManager {
     func purchase() async {
         guard !isProcessing else { return }
         isProcessing = true
-        message = nil
+        message = "Appleの購入画面を準備しています…"
         defer { isProcessing = false }
 
         do {
@@ -143,8 +174,17 @@ final class TrialManager {
             if let purchasePerformer {
                 outcome = try await purchasePerformer(product)
             } else {
-                if product == nil { await loadProduct() }
-                guard let product else { throw TrialPurchaseError.productUnavailable }
+                if product == nil {
+                    guard await loadProduct(forceReload: true) else { return }
+                }
+                guard let product else {
+                    message = TrialPurchaseError.productUnavailable.localizedDescription
+                    return
+                }
+                message = "Appleの購入画面を開いています…"
+                Self.logger.info(
+                    "Starting purchase for product \(Self.productID, privacy: .public)"
+                )
                 switch try await product.purchase() {
                 case .success(let verificationResult):
                     let transaction = try Self.verified(verificationResult)
@@ -170,10 +210,13 @@ final class TrialManager {
             case .pending:
                 message = "購入は承認待ちです。承認後に自動で利用可能になります。"
             case .userCancelled:
-                break
+                message = "購入をキャンセルしました。料金は発生していません。"
             }
         } catch {
-            message = error.localizedDescription
+            Self.logger.error(
+                "Purchase failed: \(error.localizedDescription, privacy: .public)"
+            )
+            message = "購入を開始できませんでした。\(error.localizedDescription)"
         }
     }
 
@@ -190,15 +233,78 @@ final class TrialManager {
                 ? "購入を復元しました。"
                 : "復元できる購入履歴が見つかりませんでした。"
         } catch {
-            message = error.localizedDescription
+            message = "購入の復元に失敗しました。\(error.localizedDescription)"
         }
     }
 
-    private func loadProduct() async {
-        do {
-            product = try await productLoader()
-        } catch {
-            message = error.localizedDescription
+    @discardableResult
+    func loadProduct(forceReload: Bool = false) async -> Bool {
+        if !forceReload, let product {
+            productAvailability = .available
+            Self.logger.debug(
+                "Using cached product \(product.id, privacy: .public), price \(product.displayPrice, privacy: .public)"
+            )
+            return true
+        }
+
+        if let productLoadTask {
+            return applyProductLoadResult(await productLoadTask.value)
+        }
+
+        productAvailability = .loading
+        let loader = productLoader
+        let task = Task { () -> ProductLoadResult in
+            do {
+                return .success(try await loader())
+            } catch {
+                return .failure(error.localizedDescription)
+            }
+        }
+        productLoadTask = task
+        let result = await task.value
+        productLoadTask = nil
+        return applyProductLoadResult(result)
+    }
+
+    private func applyProductLoadResult(_ result: ProductLoadResult) -> Bool {
+        switch result {
+        case .success(let loadedProduct):
+            guard let loadedProduct else {
+                product = nil
+                productAvailability = .unavailable
+                message = TrialPurchaseError.productUnavailable.localizedDescription
+                Self.logger.error(
+                    "Product.products returned no product for \(Self.productID, privacy: .public)"
+                )
+                return false
+            }
+
+            guard loadedProduct.id == Self.productID else {
+                product = nil
+                productAvailability = .unavailable
+                message = TrialPurchaseError.productUnavailable.localizedDescription
+                Self.logger.error(
+                    "Loaded unexpected product ID \(loadedProduct.id, privacy: .public)"
+                )
+                return false
+            }
+
+            product = loadedProduct
+            productAvailability = .available
+            message = nil
+            Self.logger.info(
+                "Loaded product \(loadedProduct.id, privacy: .public), localized price \(loadedProduct.displayPrice, privacy: .public)"
+            )
+            return true
+
+        case .failure(let detail):
+            product = nil
+            productAvailability = .unavailable
+            message = "商品情報を取得できませんでした。通信状態とApp Storeへのサインインを確認し、再読み込みしてください。（\(detail)）"
+            Self.logger.error(
+                "Product load failed for \(Self.productID, privacy: .public): \(detail, privacy: .public)"
+            )
+            return false
         }
     }
 
@@ -294,12 +400,15 @@ struct PurchaseSheet: View {
                         if trialManager.status == .purchased { dismiss() }
                     }
                 } label: {
-                    Text("今すぐ購入（\(trialManager.displayPrice)）して全機能を使う")
+                    Text(trialManager.purchaseButtonText)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(AppTheme.ai)
-                .disabled(trialManager.isProcessing)
+                .disabled(
+                    trialManager.isProcessing
+                        || trialManager.productAvailability == .loading
+                )
                 .accessibilityIdentifier("purchase.buyButton")
 
                 Button("購入を復元") {
@@ -311,6 +420,18 @@ struct PurchaseSheet: View {
                 if trialManager.isProcessing {
                     ProgressView("Appleに確認しています…")
                         .tint(AppTheme.ai)
+                } else if trialManager.productAvailability == .loading {
+                    ProgressView("商品情報を確認しています…")
+                        .tint(AppTheme.ai)
+                        .accessibilityIdentifier("purchase.productLoading")
+                }
+
+                if trialManager.productAvailability == .unavailable,
+                   !trialManager.isProcessing {
+                    Button("商品情報を再読み込み") {
+                        Task { await trialManager.loadProduct(forceReload: true) }
+                    }
+                    .accessibilityIdentifier("purchase.retryProductButton")
                 }
 
                 if let message = trialManager.message {
@@ -337,5 +458,10 @@ struct PurchaseSheet: View {
         }
         .presentationDetents([.medium, .large])
         .accessibilityIdentifier("purchase.sheet")
+        .task {
+            if trialManager.product == nil {
+                await trialManager.loadProduct(forceReload: true)
+            }
+        }
     }
 }

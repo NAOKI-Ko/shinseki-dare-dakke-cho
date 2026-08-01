@@ -45,11 +45,16 @@
 - 初回起動から7日未満は、人物・関係・集まりの追加／編集を利用できる
 - 7日経過後は追加／編集だけを停止し、保存済みデータの閲覧は常に可能
 - フルアクセスは非消費型App内課金。Product IDは
-  `com.naoki-ko.shinsekicho.fullaccess`
+  `com.naokiko.shinsekicho.fullaccess`
 - 購入状態は起動時・フォアグラウンド復帰時に、署名検証済みの
   `Transaction.currentEntitlements`から再確認する
 - 購入価格の表示はStoreKitの`Product.displayPrice`を使用する。
-  商品未取得時のみ「600円」を仮表示する
+  商品未取得時は価格を仮表示せず、取得中・取得失敗・再読み込みを明示する
+- `Product.displayPrice`はApp Storeの国／地域に応じた価格になる。日本の
+  Storefrontまたは日本設定のSandboxテスターでは`¥600`、米国の審査環境では
+  米ドル表示になることがある。通貨を固定表示せず、Appleの返す価格を使用する
+- 購入ボタンを押した後は、商品再取得・Apple購入画面の準備中・承認待ち・
+  キャンセル・エラーを表示し、「タップしても無反応」に見えないようにする
 - 「購入を復元」は`AppStore.sync()`を実行し、機種変更後の購入状態を
   Appleから再取得する
 
@@ -62,14 +67,16 @@
 ### XcodeでのStoreKitテスト
 
 リポジトリ直下の`ShinsekiCho.storekit`に、同じProduct ID・非消費型・
-日本ストア600円のローカル商品を定義しています。XcodeでSchemeを編集し、
-Run > Options > StoreKit Configurationに`ShinsekiCho.storekit`を指定すると、
+日本ストア600円のローカル商品を定義しています。共有Schemeの
+Run > Options > StoreKit Configurationにも`ShinsekiCho.storekit`を設定済みで、
 Appleへの実課金なしで購入・復元を確認できます。ユニットテストでは
-StoreKit境界を差し替え、購入完了と新しいManagerからの復元を自動確認します。
-実トランザクションのローカル確認は、XcodeのSchemeでこの設定を有効にして
-実行してください。Xcode 26.5のiOS Simulatorでは、`xcodebuild`から
-`SKTestSession`を実行すると設定同期に失敗する既知事例があるため、IDEからの
-StoreKit Testingも併用します。
+成功・承認待ち・キャンセル・エラー・商品未取得を確認します。さらに
+`SKTestSession`で実際に商品を取得し、Product ID、600円の価格、円記号を含む
+ローカライズ価格、非消費型商品の購入完了まで確認します。Xcode 26.5の
+`xcodebuild`でStoreKitデーモン内部エラーが発生した場合、この実購入診断だけは
+スキップされるため、XcodeのRunまたは実機Sandboxで必ず補完確認します。
+実機Sandbox／TestFlightを確認するときはローカルのStoreKit Configurationを
+無効にし、App Store Connectの商品情報を取得させてください。
 
 ## App Store Connectで手動登録する手順
 
@@ -79,7 +86,7 @@ StoreKit Testingも併用します。
    「収益化」>「App内課金」>「+」を選びます。
 3. 種類を「非消費型（Non-Consumable）」にし、次を入力して作成します。
    - 参照名: `ShinsekiCho Full Access`（App Store上には表示されない管理名）
-   - Product ID: `com.naoki-ko.shinsekicho.fullaccess`
+   - Product ID: `com.naokiko.shinsekicho.fullaccess`
    - Product IDと種類は作成後に変更できないため、作成前に再確認します。
 4. 日本語ローカリゼーションを追加します。
    - 表示名: `親戚だれだっけ帳 フルアクセス`
@@ -95,8 +102,14 @@ StoreKit Testingも併用します。
 8. 最初のApp内課金は、対象アプリバージョンの「App内課金とサブスクリプション」
    セクションに追加し、アプリ本体と一緒に審査へ提出します。
 9. SandboxテスターまたはTestFlightで、購入、キャンセル、承認待ち、復元を
-   実機確認します。商品メタデータの変更がSandboxへ反映されるまで最大1時間
-   程度かかる場合があります。
+   実機確認します。日本円表示を確認するときは、日本をStorefrontにした
+   Sandboxテスターを使います。商品メタデータの変更がSandboxへ反映されるまで
+   最大1時間程度かかる場合があります。
+10. Archive後、提出するBuildのバイナリにProduct ID
+    `com.naokiko.shinsekicho.fullaccess`が含まれることを確認し、Product ID
+    変更前のBuildを審査対象として選ばないでください。
+11. 商品ステータス、販売地域、価格、ローカリゼーション、審査用画像、
+    Paid Apps Agreement、税務、銀行口座情報がすべて有効であることを確認します。
 
 Apple公式手順:
 [非消費型商品の作成](https://developer.apple.com/help/app-store-connect/manage-in-app-purchases/create-consumable-or-non-consumable-in-app-purchases/)、

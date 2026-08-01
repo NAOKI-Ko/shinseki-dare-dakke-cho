@@ -1,3 +1,5 @@
+import StoreKit
+import StoreKitTest
 import XCTest
 @testable import ShinsekiCho
 
@@ -15,6 +17,10 @@ private final class MemoryFirstLaunchDateStore: FirstLaunchDateStoring {
     func removeValue(forKey key: String) throws {
         dates[key] = nil
     }
+}
+
+private struct StoreKitStubError: LocalizedError {
+    var errorDescription: String? { "StoreKit接続テストエラー" }
 }
 
 @MainActor
@@ -175,5 +181,151 @@ final class TrialManagerTests: XCTestCase {
         await restoredManager.restorePurchases()
         XCTAssertTrue(store.didSync)
         XCTAssertEqual(restoredManager.status, .purchased, restoredManager.message ?? "")
+    }
+
+    func testMissingProductShowsActionableMessageInsteadOfIgnoringTap() async {
+        let dateStore = MemoryFirstLaunchDateStore()
+        dateStore.dates[TrialManager.firstLaunchDateKey] = Date()
+            .addingTimeInterval(-8 * 24 * 60 * 60)
+        let manager = TrialManager(
+            firstLaunchDateStore: dateStore,
+            entitlementChecker: { false },
+            productLoader: { nil }
+        )
+
+        await manager.purchase()
+
+        XCTAssertEqual(manager.status, .expired)
+        XCTAssertEqual(manager.productAvailability, .unavailable)
+        XCTAssertTrue(manager.message?.contains("購入商品を読み込めませんでした") == true)
+        XCTAssertFalse(manager.isProcessing)
+    }
+
+    func testProductLoadFailureShowsRetryableMessage() async {
+        let manager = TrialManager(
+            firstLaunchDateStore: MemoryFirstLaunchDateStore(),
+            entitlementChecker: { false },
+            productLoader: { throw StoreKitStubError() }
+        )
+
+        let loaded = await manager.loadProduct(forceReload: true)
+
+        XCTAssertFalse(loaded)
+        XCTAssertEqual(manager.productAvailability, .unavailable)
+        XCTAssertTrue(manager.message?.contains("再読み込みしてください") == true)
+        XCTAssertTrue(manager.message?.contains("StoreKit接続テストエラー") == true)
+    }
+
+    func testPendingPurchaseExplainsThatApprovalIsRequired() async {
+        let manager = TrialManager(
+            firstLaunchDateStore: MemoryFirstLaunchDateStore(),
+            entitlementChecker: { false },
+            productLoader: { nil },
+            purchasePerformer: { _ in .pending }
+        )
+
+        await manager.purchase()
+
+        XCTAssertTrue(manager.message?.contains("承認待ち") == true)
+        XCTAssertNotEqual(manager.status, .purchased)
+    }
+
+    func testCancelledPurchaseAcknowledgesCancellation() async {
+        let manager = TrialManager(
+            firstLaunchDateStore: MemoryFirstLaunchDateStore(),
+            entitlementChecker: { false },
+            productLoader: { nil },
+            purchasePerformer: { _ in .userCancelled }
+        )
+
+        await manager.purchase()
+
+        XCTAssertTrue(manager.message?.contains("キャンセルしました") == true)
+        XCTAssertNotEqual(manager.status, .purchased)
+    }
+
+    func testPurchaseFailureShowsVisibleError() async {
+        let manager = TrialManager(
+            firstLaunchDateStore: MemoryFirstLaunchDateStore(),
+            entitlementChecker: { false },
+            productLoader: { nil },
+            purchasePerformer: { _ in throw StoreKitStubError() }
+        )
+
+        await manager.purchase()
+
+        XCTAssertTrue(manager.message?.contains("購入を開始できませんでした") == true)
+        XCTAssertTrue(manager.message?.contains("StoreKit接続テストエラー") == true)
+        XCTAssertFalse(manager.isProcessing)
+    }
+
+    func testStoreKitConfigurationLoadsYenProductAndCompletesPurchase() async throws {
+        let configurationURL = try XCTUnwrap(
+            Bundle(for: TrialManagerTests.self).url(
+                forResource: "ShinsekiCho",
+                withExtension: "storekit"
+            )
+        )
+        let session = try SKTestSession(contentsOf: configurationURL)
+        session.resetToDefaultState()
+        session.clearTransactions()
+        session.disableDialogs = true
+        session.storefront = "JPN"
+        session.locale = Locale(identifier: "ja_JP")
+        defer {
+            session.clearTransactions()
+            session.resetToDefaultState()
+        }
+
+        let dateStore = MemoryFirstLaunchDateStore()
+        dateStore.dates[TrialManager.firstLaunchDateKey] = Date()
+            .addingTimeInterval(-8 * 24 * 60 * 60)
+        let manager = TrialManager(
+            firstLaunchDateStore: dateStore,
+            entitlementChecker: { false }
+        )
+
+        let loaded = await manager.loadProduct(forceReload: true)
+        guard loaded, let product = manager.product else {
+            throw XCTSkip(
+                "このxcodebuild環境ではSKTestSessionがStoreKitデーモンへ設定を渡せません。XcodeのRunまたは実機Sandboxで確認します。"
+            )
+        }
+
+        XCTAssertEqual(product.id, TrialManager.productID)
+        XCTAssertEqual(product.price, Decimal(600))
+        XCTAssertTrue(product.displayPrice.contains("600"), product.displayPrice)
+        XCTAssertTrue(
+            product.displayPrice.contains("¥") || product.displayPrice.contains("￥"),
+            product.displayPrice
+        )
+
+        await manager.purchase()
+
+        XCTAssertEqual(manager.status, .purchased, manager.message ?? "")
+        XCTAssertTrue(manager.message?.contains("購入が完了しました") == true)
+    }
+
+    func testStoreKitConfigurationMatchesProductIDPriceAndJapaneseStorefront() throws {
+        let configurationURL = try XCTUnwrap(
+            Bundle(for: TrialManagerTests.self).url(
+                forResource: "ShinsekiCho",
+                withExtension: "storekit"
+            )
+        )
+        let data = try Data(contentsOf: configurationURL)
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let products = try XCTUnwrap(root["products"] as? [[String: Any]])
+        let product = try XCTUnwrap(products.first)
+        let settings = try XCTUnwrap(root["settings"] as? [String: Any])
+
+        XCTAssertEqual(products.count, 1)
+        XCTAssertEqual(product["productID"] as? String, TrialManager.productID)
+        XCTAssertEqual(product["displayPrice"] as? String, "600")
+        XCTAssertEqual(product["type"] as? String, "NonConsumable")
+        XCTAssertEqual(settings["_storefront"] as? String, "JPN")
+        XCTAssertEqual(settings["_locale"] as? String, "ja_JP")
     }
 }
