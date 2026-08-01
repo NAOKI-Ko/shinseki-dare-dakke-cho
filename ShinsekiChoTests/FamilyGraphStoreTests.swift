@@ -481,7 +481,8 @@ final class FamilyGraphStoreTests: XCTestCase {
     let anchors = GraphCanvasGeometry.edgeAnchors(
       from: rawNodeCenter,
       to: otherCenter,
-      beadRadius: 28
+      startRadius: 28 * 1.06,
+      endRadius: 28 * 0.9
     )
 
     for scale in [CGFloat(0.4), 0.6, 1.0, 2.5] {
@@ -499,13 +500,90 @@ final class FamilyGraphStoreTests: XCTestCase {
           transform.applying(to: anchors.start, around: origin).x - transformedNodeCenter.x,
           transform.applying(to: anchors.start, around: origin).y - transformedNodeCenter.y
         ),
-        28 * scale,
+        28 * 1.06 * scale,
         accuracy: 0.0001
       )
       let restored = transform.removing(from: transformedNodeCenter, around: origin)
       XCTAssertEqual(restored.x, rawNodeCenter.x, accuracy: 0.0001)
       XCTAssertEqual(restored.y, rawNodeCenter.y, accuracy: 0.0001)
     }
+  }
+
+  func testSemanticZoomCentralPolicyReducesOverviewNoise() {
+    XCTAssertEqual(GraphSemanticZoomPolicy.level(for: 0.4), .overview)
+    XCTAssertEqual(GraphSemanticZoomPolicy.level(for: 0.6), .overview)
+    XCTAssertEqual(GraphSemanticZoomPolicy.level(for: 1), .normal)
+    XCTAssertEqual(GraphSemanticZoomPolicy.level(for: 2.5), .close)
+
+    XCTAssertEqual(
+      GraphSemanticZoomPolicy.visibility(
+        at: .overview,
+        isFocused: false,
+        focusDistance: 1,
+        isExpanded: false
+      ),
+      GraphSemanticVisibility(
+        showsName: false,
+        showsRelation: false,
+        showsExpansionBadge: false
+      )
+    )
+    XCTAssertEqual(
+      GraphSemanticZoomPolicy.visibility(
+        at: .normal,
+        isFocused: false,
+        focusDistance: 2,
+        isExpanded: false
+      ),
+      GraphSemanticVisibility(
+        showsName: true,
+        showsRelation: false,
+        showsExpansionBadge: false
+      )
+    )
+    XCTAssertEqual(
+      GraphSemanticZoomPolicy.visibility(
+        at: .close,
+        isFocused: false,
+        focusDistance: 3,
+        isExpanded: false
+      ),
+      GraphSemanticVisibility(
+        showsName: true,
+        showsRelation: true,
+        showsExpansionBadge: true
+      )
+    )
+  }
+
+  func testFocusHierarchyUsesShortestGraphDistanceAndKeepsFurtherNodesVisible() throws {
+    let fixture = try makeFixture()
+    let distanceTwo = Person(name: "距離2")
+    let further = Person(name: "距離3")
+    fixture.container.mainContext.insert(distanceTwo)
+    fixture.container.mainContext.insert(further)
+    try fixture.container.mainContext.save()
+    RelationshipManager.addParentChild(parent: fixture.b, child: distanceTwo)
+    RelationshipManager.addParentChild(parent: distanceTwo, child: further)
+
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.a)
+    store.expand(fixture.a)
+    store.expand(fixture.b)
+    store.expand(distanceTwo)
+    let distances = store.distances(from: key(fixture.a))
+
+    XCTAssertEqual(distances[key(fixture.a)], 0)
+    XCTAssertEqual(distances[key(fixture.b)], 1)
+    XCTAssertEqual(distances[key(distanceTwo)], 2)
+    XCTAssertEqual(distances[key(further)], 3)
+    XCTAssertEqual(GraphFocusHierarchy.presentation(for: 0).band, .focused)
+    XCTAssertEqual(GraphFocusHierarchy.presentation(for: 1).band, .direct)
+    XCTAssertEqual(GraphFocusHierarchy.presentation(for: 2).band, .distanceTwo)
+    let distantPresentation = GraphFocusHierarchy.presentation(for: 3)
+    XCTAssertEqual(distantPresentation.band, .further)
+    XCTAssertGreaterThan(distantPresentation.nodeOpacity, 0)
+    XCTAssertGreaterThan(distantPresentation.nodeScale, 0)
   }
 
   func testQuickRegistrationMenuAndSaveBothEnforceSpouseAndParentLimits() throws {

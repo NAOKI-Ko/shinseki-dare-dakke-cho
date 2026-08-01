@@ -84,6 +84,109 @@ struct GraphViewportTransform {
   }
 }
 
+enum GraphSemanticZoomLevel: String, Equatable {
+  case overview
+  case normal
+  case close
+}
+
+struct GraphSemanticVisibility: Equatable {
+  let showsName: Bool
+  let showsRelation: Bool
+  let showsExpansionBadge: Bool
+}
+
+/// ズーム倍率ごとの情報量を一箇所で調整する。
+/// Phase 2で見た目を詰める場合も、各Viewへ閾値を散らさない。
+enum GraphSemanticZoomPolicy {
+  static let overviewUpperBound: CGFloat = 0.74
+  static let closeLowerBound: CGFloat = 1.35
+
+  static func level(for scale: CGFloat) -> GraphSemanticZoomLevel {
+    if scale <= overviewUpperBound { return .overview }
+    if scale >= closeLowerBound { return .close }
+    return .normal
+  }
+
+  static func visibility(
+    at level: GraphSemanticZoomLevel,
+    isFocused: Bool,
+    focusDistance: Int?,
+    isExpanded: Bool
+  ) -> GraphSemanticVisibility {
+    switch level {
+    case .overview:
+      return GraphSemanticVisibility(
+        showsName: isFocused,
+        showsRelation: false,
+        showsExpansionBadge: false
+      )
+    case .normal:
+      return GraphSemanticVisibility(
+        showsName: true,
+        showsRelation: isFocused || (focusDistance ?? .max) <= 1,
+        showsExpansionBadge: isFocused && !isExpanded
+      )
+    case .close:
+      return GraphSemanticVisibility(
+        showsName: true,
+        showsRelation: true,
+        showsExpansionBadge: !isExpanded
+      )
+    }
+  }
+}
+
+enum GraphFocusBand: Equatable {
+  case focused
+  case direct
+  case distanceTwo
+  case further
+}
+
+struct GraphFocusPresentation: Equatable {
+  let band: GraphFocusBand
+  let nodeOpacity: Double
+  let nodeScale: CGFloat
+  let edgeOpacity: Double
+}
+
+/// フォーカス人物からの距離を、読みやすさを保つ控えめな奥行きへ変換する。
+enum GraphFocusHierarchy {
+  static func presentation(for distance: Int?) -> GraphFocusPresentation {
+    switch distance {
+    case 0:
+      GraphFocusPresentation(
+        band: .focused,
+        nodeOpacity: 1,
+        nodeScale: 1.06,
+        edgeOpacity: 1
+      )
+    case 1:
+      GraphFocusPresentation(
+        band: .direct,
+        nodeOpacity: 0.96,
+        nodeScale: 1,
+        edgeOpacity: 0.88
+      )
+    case 2:
+      GraphFocusPresentation(
+        band: .distanceTwo,
+        nodeOpacity: 0.76,
+        nodeScale: 0.94,
+        edgeOpacity: 0.68
+      )
+    default:
+      GraphFocusPresentation(
+        band: .further,
+        nodeOpacity: 0.56,
+        nodeScale: 0.9,
+        edgeOpacity: 0.48
+      )
+    }
+  }
+}
+
 struct GraphEdgeAnchors {
   let startCenter: CGPoint
   let endCenter: CGPoint
@@ -110,10 +213,24 @@ enum GraphCanvasGeometry {
     to endCenter: CGPoint,
     beadRadius: CGFloat
   ) -> GraphEdgeAnchors {
+    edgeAnchors(
+      from: startCenter,
+      to: endCenter,
+      startRadius: beadRadius,
+      endRadius: beadRadius
+    )
+  }
+
+  static func edgeAnchors(
+    from startCenter: CGPoint,
+    to endCenter: CGPoint,
+    startRadius: CGFloat,
+    endRadius: CGFloat
+  ) -> GraphEdgeAnchors {
     let dx = endCenter.x - startCenter.x
     let dy = endCenter.y - startCenter.y
     let distance = hypot(dx, dy)
-    guard distance > beadRadius * 2, distance > 0 else {
+    guard distance > startRadius + endRadius, distance > 0 else {
       return GraphEdgeAnchors(
         startCenter: startCenter,
         endCenter: endCenter,
@@ -127,12 +244,12 @@ enum GraphCanvasGeometry {
       startCenter: startCenter,
       endCenter: endCenter,
       start: CGPoint(
-        x: startCenter.x + unitX * beadRadius,
-        y: startCenter.y + unitY * beadRadius
+        x: startCenter.x + unitX * startRadius,
+        y: startCenter.y + unitY * startRadius
       ),
       end: CGPoint(
-        x: endCenter.x - unitX * beadRadius,
-        y: endCenter.y - unitY * beadRadius
+        x: endCenter.x - unitX * endRadius,
+        y: endCenter.y - unitY * endRadius
       )
     )
   }
@@ -537,6 +654,35 @@ final class FamilyGraphStore {
     return .indigo
   }
 
+  /// 現在キャンバスに存在するエッジだけを使い、指定人物からの最短距離を返す。
+  /// Focus hierarchyの見た目は、この純粋なグラフ距離だけを参照する。
+  func distances(from sourceID: PersistentModelIDBox) -> [PersistentModelIDBox: Int] {
+    guard nodes[sourceID] != nil else { return [:] }
+    var result: [PersistentModelIDBox: Int] = [sourceID: 0]
+    var queue = [sourceID]
+    var index = 0
+
+    while index < queue.count {
+      let current = queue[index]
+      index += 1
+      let nextDistance = (result[current] ?? 0) + 1
+      for edge in edges {
+        let neighbor: PersistentModelIDBox
+        if edge.from == current {
+          neighbor = edge.to
+        } else if edge.to == current {
+          neighbor = edge.from
+        } else {
+          continue
+        }
+        guard result[neighbor] == nil else { continue }
+        result[neighbor] = nextDistance
+        queue.append(neighbor)
+      }
+    }
+    return result
+  }
+
   func isExpanded(_ person: Person, expandedSet: Set<PersistentModelIDBox>) -> Bool {
     expandedSet.contains(PersistentModelIDBox(person.persistentModelID))
   }
@@ -563,6 +709,8 @@ struct FamilyGraphView: View {
   @State private var visibleNodeIDs: Set<PersistentModelIDBox> = []
   @State private var edgeProgress: [UUID: CGFloat] = [:]
   @State private var emphasizedPathEdges: Set<GraphEdgeEndpoints>?
+  @State private var focusedNodeID: PersistentModelIDBox?
+  @State private var focusDistances: [PersistentModelIDBox: Int] = [:]
   @State private var bouncingNodeID: PersistentModelIDBox?
   @State private var nodeActionRequest: GraphNodeActionRequest?
   @State private var quickRelativeRequest: QuickRelativeRequest?
@@ -582,7 +730,6 @@ struct FamilyGraphView: View {
 
   private let levelHeight: CGFloat = 120
   private let slotWidth: CGFloat = 108
-  private let nodeSize: CGFloat = 68
   private let nodeCardWidth: CGFloat = 92
   private let beadDiameter: CGFloat = 56
   private let nodeCardHeight: CGFloat = 102
@@ -600,6 +747,7 @@ struct FamilyGraphView: View {
         scale: effectiveScale,
         offset: liveOffset
       )
+      let semanticZoomLevel = GraphSemanticZoomPolicy.level(for: effectiveScale)
 
       ZStack {
         AppTheme.paper
@@ -613,10 +761,13 @@ struct FamilyGraphView: View {
                 let anchors = edgeAnchors(from: a, to: b, origin: origin)
                 let isEmphasized = emphasizedPathEdges?.contains(edge.endpoints) ?? true
                 let normalWidth: CGFloat = edge.kind == .spouse ? 2.5 : 1.5
+                let focusOpacity = edgeFocusOpacity(for: edge)
                 GraphEdgeShape(start: anchors.start, end: anchors.end)
                   .trim(from: 0, to: edgeProgress[edge.id] ?? 0)
                   .stroke(
-                    store.branch(for: edge).color.opacity(isEmphasized ? 1 : 0.35),
+                    store.branch(for: edge).color.opacity(
+                      focusOpacity * (isEmphasized ? 1 : 0.35)
+                    ),
                     style: StrokeStyle(
                       lineWidth: isEmphasized ? normalWidth : normalWidth * 0.5,
                       lineCap: .round,
@@ -637,13 +788,24 @@ struct FamilyGraphView: View {
           ZStack {
             ForEach(Array(store.nodes.values), id: \.id) { node in
               let beadCenter = graphPosition(node, origin: origin)
+              let isFocused = node.id == focusedNodeID
+              let distance = focusDistances[node.id]
+              let focusPresentation = GraphFocusHierarchy.presentation(for: distance)
+              let semanticVisibility = GraphSemanticZoomPolicy.visibility(
+                at: semanticZoomLevel,
+                isFocused: isFocused,
+                focusDistance: distance,
+                isExpanded: expandedIDs.contains(node.id)
+              )
               GraphNodeCard(
                 person: node.person,
                 isSelf: node.person.persistentModelID == selfPerson.persistentModelID,
-                isFocused: node.person.persistentModelID == displayedPerson.persistentModelID,
+                isFocused: isFocused,
                 isExpanded: expandedIDs.contains(node.id),
                 relationLabel: RelationLabeler.label(for: node.path),
-                branch: store.branch(for: node.id)
+                branch: store.branch(for: node.id),
+                semanticVisibility: semanticVisibility,
+                focusPresentation: focusPresentation
               )
               .frame(width: nodeCardWidth, height: nodeCardHeight, alignment: .top)
               .position(
@@ -653,6 +815,7 @@ struct FamilyGraphView: View {
               // 登場・バウンスは珠の中心を固定した局所アニメーションに限定する。
               .scaleEffect(
                 (visibleNodeIDs.contains(node.id) ? 1 : 0.3)
+                  * focusPresentation.nodeScale
                   * (bouncingNodeID == node.id ? 1.08 : 1),
                 anchor: UnitPoint(x: 0.5, y: (beadDiameter / 2) / nodeCardHeight)
               )
@@ -661,7 +824,13 @@ struct FamilyGraphView: View {
               .accessibilityAddTraits(.isButton)
               .accessibilityIdentifier("connectionMap.node.\(node.person.name)")
               .accessibilityLabel(node.person.name)
-              .accessibilityValue(expandedIDs.contains(node.id) ? "展開済み" : "未展開")
+              .accessibilityValue(
+                nodeAccessibilityValue(
+                  node: node,
+                  zoomLevel: semanticZoomLevel,
+                  focusPresentation: focusPresentation
+                )
+              )
               .accessibilityAction {
                 expand(node)
               }
@@ -692,6 +861,8 @@ struct FamilyGraphView: View {
             let proposedScale = scale * value
             if proposedScale <= 0.45 {
               scale = 0.4
+            } else if (0.55...0.65).contains(proposedScale) {
+              scale = 0.6
             } else if proposedScale >= 2.4 {
               scale = 2.5
             } else {
@@ -833,8 +1004,41 @@ struct FamilyGraphView: View {
     GraphCanvasGeometry.edgeAnchors(
       from: graphPosition(first, origin: origin),
       to: graphPosition(second, origin: origin),
-      beadRadius: beadDiameter / 2
+      startRadius: beadDiameter / 2
+        * GraphFocusHierarchy.presentation(for: focusDistances[first.id]).nodeScale,
+      endRadius: beadDiameter / 2
+        * GraphFocusHierarchy.presentation(for: focusDistances[second.id]).nodeScale
     )
+  }
+
+  private func edgeFocusOpacity(for edge: GraphEdge) -> Double {
+    let closestDistance = [focusDistances[edge.from], focusDistances[edge.to]]
+      .compactMap { $0 }
+      .min()
+    return GraphFocusHierarchy.presentation(for: closestDistance).edgeOpacity
+  }
+
+  private func updateFocus(to person: Person) {
+    let id = PersistentModelIDBox(person.persistentModelID)
+    focusedNodeID = id
+    focusDistances = store.distances(from: id)
+    emphasizedPathEdges = GraphPathEmphasis.edgeEndpoints(
+      for: RelationLabeler.shortestRoute(from: selfPerson, to: person)
+    )
+  }
+
+  private func nodeAccessibilityValue(
+    node: GraphNode,
+    zoomLevel: GraphSemanticZoomLevel,
+    focusPresentation: GraphFocusPresentation
+  ) -> String {
+    let expansion = expandedIDs.contains(node.id) ? "展開済み" : "未展開"
+    #if DEBUG
+      if ProcessInfo.processInfo.arguments.contains("-ui-testing-family-graph-ux") {
+        return "\(expansion)|zoom:\(zoomLevel.rawValue)|focus:\(focusPresentation.band)"
+      }
+    #endif
+    return expansion
   }
 
   private func expand(_ node: GraphNode) {
@@ -844,6 +1048,7 @@ struct FamilyGraphView: View {
     store.expand(node.person)
     let addedNodeIDs = Set(store.nodes.keys).subtracting(previousNodeIDs)
     let addedEdgeIDs = Set(store.edges.map(\.id)).subtracting(previousEdgeIDs)
+    updateFocus(to: node.person)
 
     _ = withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.2)) {
       expandedIDs.insert(node.id)
@@ -855,6 +1060,7 @@ struct FamilyGraphView: View {
 
   private func presentNodeActions(for person: Person) {
     suppressTapAfterLongPress = true
+    updateFocus(to: person)
     nodeActionRequest = GraphNodeActionRequest(person: person)
   }
 
@@ -907,9 +1113,8 @@ struct FamilyGraphView: View {
     expandedIDs = []
     visibleNodeIDs = []
     edgeProgress = [:]
-    emphasizedPathEdges = GraphPathEmphasis.edgeEndpoints(
-      for: RelationLabeler.shortestRoute(from: selfPerson, to: displayedPerson)
-    )
+    focusedNodeID = nil
+    focusDistances = [:]
     bouncingNodeID = nil
 
     let selfID = PersistentModelIDBox(selfPerson.persistentModelID)
@@ -917,6 +1122,7 @@ struct FamilyGraphView: View {
     let previousNodeIDs = Set(store.nodes.keys)
     expandedIDs.formUnion(store.expandShortestPath(to: displayedPerson))
     let addedNodeIDs = Set(store.nodes.keys).subtracting(previousNodeIDs)
+    updateFocus(to: displayedPerson)
 
     if playsIntroAnimation && !reduceMotion {
       let overview = GraphIntroLayout.overview(
@@ -1231,13 +1437,16 @@ private struct GraphNodeCard: View {
   var isExpanded: Bool
   var relationLabel: String
   var branch: FamilyBranch
+  var semanticVisibility: GraphSemanticVisibility
+  var focusPresentation: GraphFocusPresentation
 
   private var photoImage: UIImage? {
     PersonPhotoSupport.image(from: person.photoData)
   }
 
   private var contentOpacity: Double {
-    isExpanded ? 1 : GraphNodeSurfaceContract.inactiveContentOpacity
+    (isExpanded ? 1 : GraphNodeSurfaceContract.inactiveContentOpacity)
+      * focusPresentation.nodeOpacity
   }
 
   var body: some View {
@@ -1279,7 +1488,7 @@ private struct GraphNodeCard: View {
       )
       // 未展開のノードには、まだ辿れることを示す小さな＋バッジ
       .overlay(alignment: .bottomTrailing) {
-        if !isExpanded {
+        if semanticVisibility.showsExpansionBadge {
           Image(systemName: "plus.circle.fill")
             .font(.caption)
             .foregroundStyle(AppTheme.ai)
@@ -1288,16 +1497,18 @@ private struct GraphNodeCard: View {
         }
       }
 
-      Text(person.name)
-        .font(.caption2.weight(isSelf ? .bold : .medium))
-        .foregroundStyle(AppTheme.ink)
-        .lineLimit(1)
-        .minimumScaleFactor(0.72)
-        .allowsTightening(true)
-        .frame(width: 92)
-        .opacity(contentOpacity)
+      if semanticVisibility.showsName {
+        Text(person.name)
+          .font(.caption2.weight(isSelf ? .bold : .medium))
+          .foregroundStyle(AppTheme.ink)
+          .lineLimit(1)
+          .minimumScaleFactor(0.72)
+          .allowsTightening(true)
+          .frame(width: 92)
+          .opacity(contentOpacity)
+      }
 
-      if !relationLabel.isEmpty {
+      if semanticVisibility.showsRelation, !relationLabel.isEmpty {
         Text("(\(relationLabel))")
           .font(.system(size: 9, weight: .medium))
           .foregroundStyle(AppTheme.inkSoft)

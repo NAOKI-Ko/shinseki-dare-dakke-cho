@@ -646,21 +646,31 @@ final class ShinsekiChoUITests: XCTestCase {
 
     app.buttons["connectionMap.resetButton"].tap()
     waitForScale("1.00")
-    keepScreenshot(app, name: "FamilyGraphUX_02_zoom_1_0x")
+    canvas.pinch(withScale: 0.6, velocity: -1)
+    waitForScale("0.60")
+    keepScreenshot(app, name: "FamilyGraphUX_02_zoom_0_6x")
+
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale("1.00")
+    keepScreenshot(app, name: "FamilyGraphUX_03_zoom_1_0x")
 
     canvas.pinch(withScale: 2.5, velocity: 1)
     waitForScale("2.50")
-    keepScreenshot(app, name: "FamilyGraphUX_03_zoom_2_5x")
+    keepScreenshot(app, name: "FamilyGraphUX_04_zoom_2_5x")
 
     app.buttons["connectionMap.resetButton"].tap()
     waitForScale("1.00")
     let father = element("connectionMap.node.山田 一郎", in: app)
     XCTAssertTrue(father.waitForExistence(timeout: 5))
-    XCTAssertEqual(father.value as? String, "未展開")
+    XCTAssertTrue((father.value as? String)?.contains("未展開") == true)
+    father.tap()
+    XCTAssertTrue((father.value as? String)?.contains("focus:focused") == true)
+    keepScreenshot(app, name: "FamilyGraphUX_05_focused_person")
+
     father.press(forDuration: 1.2)
     XCTAssertTrue(element("connectionMap.actionSheet", in: app).waitForExistence(timeout: 3))
-    XCTAssertEqual(father.value as? String, "未展開")
-    keepScreenshot(app, name: "FamilyGraphUX_04_long_press_action_sheet")
+    XCTAssertTrue((father.value as? String)?.contains("展開済み") == true)
+    keepScreenshot(app, name: "FamilyGraphUX_07_long_press_action_sheet")
 
     app.buttons["connectionMap.menu.child"].tap()
     let nameField = element("quickRelative.name", in: app)
@@ -681,7 +691,28 @@ final class ShinsekiChoUITests: XCTestCase {
           withNormalizedOffset: CGVector(dx: 0.45, dy: 0.55)
         )
       )
-    keepScreenshot(app, name: "FamilyGraphUX_05_joint_child_after_add")
+    keepScreenshot(app, name: "FamilyGraphUX_08_joint_child_after_add")
+
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale("1.00")
+    let spouse = element("connectionMap.node.佐藤 美咲", in: app)
+    XCTAssertTrue(spouse.waitForExistence(timeout: 5))
+    spouse.tap()
+    let spouseFather = element("connectionMap.node.佐藤 修一", in: app)
+    XCTAssertTrue(spouseFather.waitForExistence(timeout: 5))
+    spouseFather.tap()
+    let spouseBrother = element("connectionMap.node.佐藤 健太", in: app)
+    XCTAssertTrue(spouseBrother.waitForExistence(timeout: 5))
+    spouseBrother.tap()
+    XCTAssertTrue(element("connectionMap.node.佐藤 蓮", in: app).waitForExistence(timeout: 5))
+    canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.55))
+      .press(
+        forDuration: 0.05,
+        thenDragTo: canvas.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55)
+        )
+      )
+    keepScreenshot(app, name: "FamilyGraphUX_06_distant_relatives")
   }
 
   func testMapContextMenuDetailNavigationAndAvailableParentAction() {
