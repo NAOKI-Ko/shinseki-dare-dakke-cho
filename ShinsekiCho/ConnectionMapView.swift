@@ -859,15 +859,7 @@ struct FamilyGraphView: View {
           .onEnded { value in
             cancelIntroAnimation()
             let proposedScale = scale * value
-            if proposedScale <= 0.45 {
-              scale = 0.4
-            } else if (0.55...0.65).contains(proposedScale) {
-              scale = 0.6
-            } else if proposedScale >= 2.4 {
-              scale = 2.5
-            } else {
-              scale = proposedScale
-            }
+            scale = min(max(proposedScale, 0.4), 2.5)
           }
       )
       .simultaneousGesture(

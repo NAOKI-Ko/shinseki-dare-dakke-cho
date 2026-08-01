@@ -633,33 +633,41 @@ final class ShinsekiChoUITests: XCTestCase {
     let canvas = element("connectionMap.home.canvas", in: app)
     XCTAssertTrue(canvas.waitForExistence(timeout: 5))
 
-    func waitForScale(_ expected: String) {
-      let predicate = NSPredicate(format: "value CONTAINS %@", "scale:\(expected)")
+    func waitForScale(_ expected: Double, tolerance: Double = 0.02) {
+      let predicate = NSPredicate { object, _ in
+        guard
+          let element = object as? XCUIElement,
+          let value = element.value as? String,
+          let scaleText = value.components(separatedBy: "scale:").last,
+          let observedScale = Double(scaleText)
+        else { return false }
+        return abs(observedScale - expected) <= tolerance
+      }
       let expectation = XCTNSPredicateExpectation(predicate: predicate, object: canvas)
       XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 3), .completed)
     }
 
-    waitForScale("1.00")
+    waitForScale(1)
     canvas.pinch(withScale: 0.4, velocity: -1)
-    waitForScale("0.40")
+    waitForScale(0.4)
     keepScreenshot(app, name: "FamilyGraphUX_01_zoom_0_4x")
 
     app.buttons["connectionMap.resetButton"].tap()
-    waitForScale("1.00")
+    waitForScale(1)
     canvas.pinch(withScale: 0.6, velocity: -1)
-    waitForScale("0.60")
+    waitForScale(0.6, tolerance: 0.06)
     keepScreenshot(app, name: "FamilyGraphUX_02_zoom_0_6x")
 
     app.buttons["connectionMap.resetButton"].tap()
-    waitForScale("1.00")
+    waitForScale(1)
     keepScreenshot(app, name: "FamilyGraphUX_03_zoom_1_0x")
 
     canvas.pinch(withScale: 2.5, velocity: 1)
-    waitForScale("2.50")
+    waitForScale(2.5)
     keepScreenshot(app, name: "FamilyGraphUX_04_zoom_2_5x")
 
     app.buttons["connectionMap.resetButton"].tap()
-    waitForScale("1.00")
+    waitForScale(1)
     let father = element("connectionMap.node.山田 一郎", in: app)
     XCTAssertTrue(father.waitForExistence(timeout: 5))
     XCTAssertTrue((father.value as? String)?.contains("未展開") == true)
@@ -694,7 +702,7 @@ final class ShinsekiChoUITests: XCTestCase {
     keepScreenshot(app, name: "FamilyGraphUX_08_joint_child_after_add")
 
     app.buttons["connectionMap.resetButton"].tap()
-    waitForScale("1.00")
+    waitForScale(1)
     let spouse = element("connectionMap.node.佐藤 美咲", in: app)
     XCTAssertTrue(spouse.waitForExistence(timeout: 5))
     spouse.tap()
