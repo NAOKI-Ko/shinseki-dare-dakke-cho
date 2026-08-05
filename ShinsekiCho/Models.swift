@@ -125,17 +125,57 @@ final class Gathering {
 // 一箇所に集約する。UIからは直接 person.parents.append(...) 等を
 // 呼ばず、必ずこのenumの関数を経由すること。
 
+enum RelationshipKind: String, CaseIterable {
+    case spouse
+    case parent
+    case child
+}
+
+enum RelationshipLinkError: LocalizedError, Equatable {
+    case selfRelation
+    case spouseUnavailable
+    case parentLimit
+    case alreadyLinked
+
+    var errorDescription: String? {
+        switch self {
+        case .selfRelation:
+            "同じ人物どうしを関係づけることはできません。"
+        case .spouseUnavailable:
+            "配偶者は1人まで登録できます。"
+        case .parentLimit:
+            "親は2人まで登録できます。"
+        case .alreadyLinked:
+            "この関係はすでに登録されています。"
+        }
+    }
+}
+
 enum RelationshipManager {
-    /// 配偶者として結びつける。互いの元の配偶者関係があれば解消する。
-    static func setSpouse(_ a: Person, _ b: Person) {
-        if let oldA = a.spouse, oldA.persistentModelID != b.persistentModelID {
-            oldA.spouse = nil
-        }
-        if let oldB = b.spouse, oldB.persistentModelID != a.persistentModelID {
-            oldB.spouse = nil
-        }
+    private static func isSamePerson(_ a: Person, _ b: Person) -> Bool {
+        a.persistentModelID == b.persistentModelID
+    }
+
+    /// 新しい配偶者関係を作れるか。既存配偶者の暗黙置換は行わない。
+    static func canSetSpouse(_ a: Person, _ b: Person) -> Bool {
+        guard !isSamePerson(a, b) else { return false }
+        return a.spouse == nil && b.spouse == nil
+    }
+
+    /// 配偶者として双方向に結びつける。既存配偶者がいる場合は変更しない。
+    @discardableResult
+    static func setSpouse(_ a: Person, _ b: Person) -> Bool {
+        guard !isSamePerson(a, b) else { return false }
+        let alreadyLinked = a.spouse?.persistentModelID == b.persistentModelID
+            && b.spouse?.persistentModelID == a.persistentModelID
+        if alreadyLinked { return false }
+
+        let aCanLink = a.spouse == nil || a.spouse?.persistentModelID == b.persistentModelID
+        let bCanLink = b.spouse == nil || b.spouse?.persistentModelID == a.persistentModelID
+        guard aCanLink, bCanLink else { return false }
         a.spouse = b
         b.spouse = a
+        return true
     }
 
     /// 配偶者関係を解消する
@@ -146,24 +186,141 @@ enum RelationshipManager {
         person.spouse = nil
     }
 
-    /// 親子関係を追加する(parentの子としてchildを、childの親としてparentを、両方に反映)
-    static func addParentChild(parent: Person, child: Person) {
-        guard parent.persistentModelID != child.persistentModelID else { return }
-        if !parent.children.contains(where: { $0.persistentModelID == child.persistentModelID }) {
+    /// 親子関係を安全に追加できるか。親は最大2人、自己関係は禁止。
+    static func canAddParentChild(parent: Person, child: Person) -> Bool {
+        guard !isSamePerson(parent, child) else { return false }
+        let alreadyParent = child.parents.contains {
+            $0.persistentModelID == parent.persistentModelID
+        }
+        return alreadyParent || child.parents.count < 2
+    }
+
+    /// 親子関係を追加する(parentの子・childの親の両方向を同期)。
+    @discardableResult
+    static func addParentChild(parent: Person, child: Person) -> Bool {
+        guard canAddParentChild(parent: parent, child: child) else { return false }
+        let hadChild = parent.children.contains {
+            $0.persistentModelID == child.persistentModelID
+        }
+        let hadParent = child.parents.contains {
+            $0.persistentModelID == parent.persistentModelID
+        }
+        if !hadChild {
             parent.children.append(child)
         }
-        if !child.parents.contains(where: { $0.persistentModelID == parent.persistentModelID }) {
+        if !hadParent {
             child.parents.append(parent)
+        }
+        return !hadChild || !hadParent
+    }
+
+    /// childをpersonの子として追加する。配偶者との共同子化は明示指定時のみ行う。
+    @discardableResult
+    static func addChild(
+        _ child: Person,
+        to person: Person,
+        includeSpouse: Bool
+    ) -> Bool {
+        let linkedToPerson = addParentChild(parent: person, child: child)
+        guard linkedToPerson || person.children.contains(where: {
+            $0.persistentModelID == child.persistentModelID
+        }) else { return false }
+
+        var linkedToSpouse = false
+        if includeSpouse, let spouse = person.spouse {
+            linkedToSpouse = addParentChild(parent: spouse, child: child)
+        }
+        return linkedToPerson || linkedToSpouse
+    }
+
+    /// UIから利用する共通の関係作成可否。
+    static func canLink(_ kind: RelationshipKind, person: Person, relative: Person) -> Bool {
+        guard !isSamePerson(person, relative) else { return false }
+        switch kind {
+        case .spouse:
+            return canSetSpouse(person, relative)
+        case .parent:
+            let alreadyLinked = person.parents.contains {
+                $0.persistentModelID == relative.persistentModelID
+            }
+            return !alreadyLinked && canAddParentChild(parent: relative, child: person)
+        case .child:
+            let alreadyLinked = person.children.contains {
+                $0.persistentModelID == relative.persistentModelID
+            }
+            return !alreadyLinked && canAddParentChild(parent: person, child: relative)
         }
     }
 
-    /// personに配偶者がいる場合、その2人を共同の親としてchildへ結びつける。
-    /// 既存の親子関係はaddParentChild内で重複排除される。
-    static func addChild(_ child: Person, to person: Person) {
-        addParentChild(parent: person, child: child)
-        if let spouse = person.spouse {
-            addParentChild(parent: spouse, child: child)
+    /// 既存Person同士を、指定した関係として安全に結びつける。
+    @discardableResult
+    static func link(
+        _ kind: RelationshipKind,
+        person: Person,
+        relative: Person,
+        includeSpouseForChild: Bool = false
+    ) throws -> Bool {
+        guard !isSamePerson(person, relative) else {
+            throw RelationshipLinkError.selfRelation
         }
+        guard canLink(kind, person: person, relative: relative) else {
+            switch kind {
+            case .spouse:
+                throw RelationshipLinkError.spouseUnavailable
+            case .parent where person.parents.count >= 2:
+                throw RelationshipLinkError.parentLimit
+            default:
+                throw RelationshipLinkError.alreadyLinked
+            }
+        }
+
+        switch kind {
+        case .spouse:
+            return setSpouse(person, relative)
+        case .parent:
+            return addParentChild(parent: relative, child: person)
+        case .child:
+            return addChild(
+                relative,
+                to: person,
+                includeSpouse: includeSpouseForChild
+            )
+        }
+    }
+
+    /// 後から配偶者を追加した際、共同子にできる既存子だけを返す。
+    static func sharedChildCandidates(of person: Person, with spouse: Person) -> [Person] {
+        person.children.filter { child in
+            !spouse.children.contains(where: {
+                $0.persistentModelID == child.persistentModelID
+            }) && canAddParentChild(parent: spouse, child: child)
+        }
+    }
+
+    /// ユーザーが明示選択した既存子だけを、新しい配偶者の子として結ぶ。
+    @discardableResult
+    static func linkSharedChildren(
+        _ selectedChildren: [Person],
+        of person: Person,
+        with spouse: Person
+    ) -> Int {
+        guard person.spouse?.persistentModelID == spouse.persistentModelID,
+              spouse.spouse?.persistentModelID == person.persistentModelID
+        else { return 0 }
+
+        let eligibleIDs = Set(
+            sharedChildCandidates(of: person, with: spouse).map(\.persistentModelID)
+        )
+        var linkedCount = 0
+        var seen = Set<PersistentIdentifier>()
+        for child in selectedChildren
+        where eligibleIDs.contains(child.persistentModelID)
+            && seen.insert(child.persistentModelID).inserted {
+            if addParentChild(parent: spouse, child: child) {
+                linkedCount += 1
+            }
+        }
+        return linkedCount
     }
 
     /// 親子関係を解消する

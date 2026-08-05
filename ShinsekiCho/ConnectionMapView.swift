@@ -530,11 +530,9 @@ enum GraphFocusTransition {
   }
 }
 
-enum QuickRelationKind: String {
-  case spouse
-  case parent
-  case child
+typealias QuickRelationKind = RelationshipKind
 
+extension RelationshipKind {
   var menuTitle: String {
     switch self {
     case .spouse: "配偶者を追加"
@@ -594,7 +592,8 @@ enum QuickRelativeRegistration {
     named rawName: String,
     kind: QuickRelationKind,
     for person: Person,
-    in context: ModelContext
+    in context: ModelContext,
+    includeSpouseForChild: Bool = false
   ) throws -> Person {
     let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty else { throw QuickRelativeRegistrationError.emptyName }
@@ -609,23 +608,87 @@ enum QuickRelativeRegistration {
 
     let newPerson = Person(name: name)
     context.insert(newPerson)
-    switch kind {
-    case .spouse:
-      RelationshipManager.setSpouse(person, newPerson)
-    case .parent:
-      RelationshipManager.addParentChild(parent: newPerson, child: person)
-    case .child:
-      RelationshipManager.addChild(newPerson, to: person)
-    }
-
     do {
+      try RelationshipManager.link(
+        kind,
+        person: person,
+        relative: newPerson,
+        includeSpouseForChild: includeSpouseForChild
+      )
       try context.save()
+    } catch let error as RelationshipLinkError {
+      RelationshipManager.detachAll(newPerson)
+      context.delete(newPerson)
+      throw error
     } catch {
       RelationshipManager.detachAll(newPerson)
       context.delete(newPerson)
       throw QuickRelativeRegistrationError.saveFailed
     }
     return newPerson
+  }
+
+  static func candidates(
+    for kind: QuickRelationKind,
+    person: Person,
+    from allPersons: [Person]
+  ) -> [Person] {
+    allPersons.filter {
+      RelationshipManager.canLink(kind, person: person, relative: $0)
+    }
+  }
+
+  static func linkExisting(
+    _ relative: Person,
+    kind: QuickRelationKind,
+    for person: Person,
+    in context: ModelContext,
+    includeSpouseForChild: Bool = false
+  ) throws {
+    let spouseWasAlreadyParent = person.spouse?.children.contains {
+      $0.persistentModelID == relative.persistentModelID
+    } ?? false
+    try RelationshipManager.link(
+      kind,
+      person: person,
+      relative: relative,
+      includeSpouseForChild: includeSpouseForChild
+    )
+    do {
+      try context.save()
+    } catch {
+      rollback(
+        relative,
+        kind: kind,
+        for: person,
+        includeSpouseForChild: includeSpouseForChild,
+        spouseWasAlreadyParent: spouseWasAlreadyParent
+      )
+      throw QuickRelativeRegistrationError.saveFailed
+    }
+  }
+
+  private static func rollback(
+    _ relative: Person,
+    kind: QuickRelationKind,
+    for person: Person,
+    includeSpouseForChild: Bool,
+    spouseWasAlreadyParent: Bool
+  ) {
+    switch kind {
+    case .spouse:
+      RelationshipManager.removeSpouse(of: person)
+    case .parent:
+      RelationshipManager.removeParentChild(parent: relative, child: person)
+    case .child:
+      RelationshipManager.removeParentChild(parent: person, child: relative)
+      if includeSpouseForChild,
+        !spouseWasAlreadyParent,
+        let spouse = person.spouse
+      {
+        RelationshipManager.removeParentChild(parent: spouse, child: relative)
+      }
+    }
   }
 }
 
@@ -1276,16 +1339,7 @@ struct FamilyGraphView: View {
       item: $quickRelativeRequest,
       onDismiss: expandPendingQuickRelative
     ) { request in
-      QuickRelativeAddSheet(person: request.person, kind: request.kind) { name in
-        guard trialManager.canEdit else {
-          throw QuickRelativeRegistrationError.saveFailed
-        }
-        try QuickRelativeRegistration.create(
-          named: name,
-          kind: request.kind,
-          for: request.person,
-          in: modelContext
-        )
+      QuickRelativeAddSheet(person: request.person, kind: request.kind) { _ in
         pendingExpansionSourceID = PersistentModelIDBox(
           request.person.persistentModelID
         )
@@ -1787,30 +1841,102 @@ private struct GraphNodeActionSheet: View {
   }
 }
 
+private enum RelativeTargetMode: String, CaseIterable {
+  case existing
+  case new
+
+  var title: String {
+    switch self {
+    case .existing: "登録済みから選ぶ"
+    case .new: "新しい人物"
+    }
+  }
+}
+
 private struct QuickRelativeAddSheet: View {
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.modelContext) private var modelContext
+  @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
+  private var allPersons: [Person]
+
   let person: Person
   let kind: QuickRelationKind
-  let onSave: (String) throws -> Void
+  let onLinked: (Person) -> Void
 
+  @State private var mode: RelativeTargetMode = .existing
   @State private var name = ""
+  @State private var searchText = ""
+  @State private var selectedCandidate: Person?
+  @State private var includeSpouseForChild = false
   @State private var errorMessage: String?
-  @FocusState private var isNameFocused: Bool
+  @State private var sharedChildPrompt: SharedChildPrompt?
+  @State private var dismissAfterSharedChildPrompt = false
+  @FocusState private var focusedField: FocusedField?
+
+  private enum FocusedField {
+    case name
+    case search
+  }
+
+  private var candidates: [Person] {
+    let available = QuickRelativeRegistration.candidates(
+      for: kind,
+      person: person,
+      from: allPersons
+    )
+    let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else { return available }
+    return available.filter {
+      $0.name.localizedStandardContains(query)
+        || $0.kana.localizedStandardContains(query)
+    }
+  }
+
+  private var canSave: Bool {
+    switch mode {
+    case .existing:
+      selectedCandidate != nil
+    case .new:
+      !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+  }
 
   var body: some View {
     NavigationStack {
-      VStack(spacing: 18) {
+      VStack(spacing: 16) {
         Text("\(person.name)の\(kind.menuTitle.replacingOccurrences(of: "を追加", with: ""))")
           .font(.subheadline)
           .foregroundStyle(AppTheme.inkSoft)
 
-        TextField("名前", text: $name)
-          .textInputAutocapitalization(.never)
-          .textFieldStyle(.roundedBorder)
-          .focused($isNameFocused)
-          .submitLabel(.done)
-          .onSubmit(save)
-          .accessibilityIdentifier("quickRelative.name")
+        Picker("追加方法", selection: $mode) {
+          ForEach(RelativeTargetMode.allCases, id: \.rawValue) { mode in
+            Text(mode.title).tag(mode)
+          }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("quickRelative.mode")
+
+        Group {
+          switch mode {
+          case .existing:
+            existingPersonPicker
+          case .new:
+            newPersonForm
+          }
+        }
+
+        if kind == .child, let spouse = person.spouse {
+          VStack(alignment: .leading, spacing: 4) {
+            Toggle("配偶者との共同の子にする", isOn: $includeSpouseForChild)
+              .tint(AppTheme.ai)
+              .accessibilityIdentifier("quickRelative.sharedChild")
+            Text("オンにした場合だけ、\(spouse.name)との親子関係も追加します。")
+              .font(.caption)
+              .foregroundStyle(AppTheme.inkSoft)
+          }
+          .padding(12)
+          .background(AppTheme.paperRaised, in: RoundedRectangle(cornerRadius: 12))
+        }
 
         if let errorMessage {
           Text(errorMessage)
@@ -1819,15 +1945,15 @@ private struct QuickRelativeAddSheet: View {
         }
 
         Button(action: save) {
-          Text("保存")
+          Text(mode == .existing ? "この人物と関係を作る" : "新しい人物を保存")
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
         .tint(AppTheme.ai)
-        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(!canSave)
         .accessibilityIdentifier("quickRelative.save")
       }
-      .padding(24)
+      .padding(20)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
       .background(AppTheme.paper)
       .navigationTitle(kind.menuTitle)
@@ -1837,14 +1963,146 @@ private struct QuickRelativeAddSheet: View {
           Button("キャンセル") { dismiss() }
         }
       }
-      .onAppear { isNameFocused = true }
+      .onAppear {
+        if QuickRelativeRegistration.candidates(
+          for: kind,
+          person: person,
+          from: allPersons
+        ).isEmpty {
+          mode = .new
+          focusedField = .name
+        } else {
+          focusedField = .search
+        }
+      }
+      .onChange(of: mode) { _, newMode in
+        errorMessage = nil
+        focusedField = newMode == .new ? .name : .search
+      }
+      .sheet(
+        item: $sharedChildPrompt,
+        onDismiss: {
+          if dismissAfterSharedChildPrompt { dismiss() }
+        }
+      ) { prompt in
+        SharedChildrenLinkSheet(prompt: prompt) { selectedChildren in
+          do {
+            _ = RelationshipManager.linkSharedChildren(
+              selectedChildren,
+              of: prompt.person,
+              with: prompt.spouse
+            )
+            try modelContext.save()
+            errorMessage = nil
+          } catch {
+            dismissAfterSharedChildPrompt = false
+            errorMessage = error.localizedDescription
+          }
+        }
+      }
     }
-    .presentationDetents([.height(260)])
+    .presentationDetents([.height(520), .large])
+    .presentationBackground(AppTheme.paper)
+  }
+
+  private var existingPersonPicker: some View {
+    VStack(spacing: 10) {
+      TextField("名前で検索", text: $searchText)
+        .textFieldStyle(.roundedBorder)
+        .focused($focusedField, equals: .search)
+        .accessibilityIdentifier("quickRelative.search")
+
+      ScrollView {
+        LazyVStack(spacing: 6) {
+          if candidates.isEmpty {
+            Text("関係を追加できる登録済み人物はいません。")
+              .font(.footnote)
+              .foregroundStyle(AppTheme.inkSoft)
+              .padding(.vertical, 24)
+          } else {
+            ForEach(candidates) { candidate in
+              Button {
+                selectedCandidate = candidate
+              } label: {
+                HStack {
+                  Text(candidate.name)
+                    .foregroundStyle(AppTheme.ink)
+                  Spacer()
+                  if selectedCandidate?.persistentModelID == candidate.persistentModelID {
+                    Image(systemName: "checkmark.circle.fill")
+                      .foregroundStyle(AppTheme.ai)
+                  }
+                }
+                .padding(.horizontal, 12)
+                .frame(minHeight: 42)
+                .background(
+                  AppTheme.paperRaised,
+                  in: RoundedRectangle(cornerRadius: 10)
+                )
+              }
+              .buttonStyle(.plain)
+              .accessibilityIdentifier("quickRelative.candidate.\(candidate.name)")
+            }
+          }
+        }
+      }
+      .frame(maxHeight: 180)
+    }
+  }
+
+  private var newPersonForm: some View {
+    TextField("名前", text: $name)
+      .textInputAutocapitalization(.never)
+      .textFieldStyle(.roundedBorder)
+      .focused($focusedField, equals: .name)
+      .submitLabel(.done)
+      .onSubmit(save)
+      .accessibilityIdentifier("quickRelative.name")
   }
 
   private func save() {
     do {
-      try onSave(name)
+      let relative: Person
+      switch mode {
+      case .existing:
+        guard let selectedCandidate else {
+          throw QuickRelativeRegistrationError.saveFailed
+        }
+        try QuickRelativeRegistration.linkExisting(
+          selectedCandidate,
+          kind: kind,
+          for: person,
+          in: modelContext,
+          includeSpouseForChild: includeSpouseForChild
+        )
+        relative = selectedCandidate
+      case .new:
+        relative = try QuickRelativeRegistration.create(
+          named: name,
+          kind: kind,
+          for: person,
+          in: modelContext,
+          includeSpouseForChild: includeSpouseForChild
+        )
+      }
+
+      onLinked(relative)
+      errorMessage = nil
+      if kind == .spouse {
+        let children = RelationshipManager.sharedChildCandidates(
+          of: person,
+          with: relative
+        )
+        if !children.isEmpty {
+          dismissAfterSharedChildPrompt = true
+          sharedChildPrompt = SharedChildPrompt(
+            person: person,
+            spouse: relative,
+            candidates: children
+          )
+          return
+        }
+      }
       dismiss()
     } catch {
       errorMessage = error.localizedDescription

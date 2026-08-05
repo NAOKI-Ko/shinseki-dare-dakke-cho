@@ -42,8 +42,8 @@ final class RelationshipManagerTests: XCTestCase {
         try insert([a, b, child], into: container.mainContext)
         RelationshipManager.setSpouse(a, b)
 
-        RelationshipManager.addChild(child, to: a)
-        RelationshipManager.addChild(child, to: a)
+        RelationshipManager.addChild(child, to: a, includeSpouse: true)
+        RelationshipManager.addChild(child, to: a, includeSpouse: true)
 
         XCTAssertEqual(a.children.filter { $0.persistentModelID == child.persistentModelID }.count, 1)
         XCTAssertEqual(b.children.filter { $0.persistentModelID == child.persistentModelID }.count, 1)
@@ -52,7 +52,7 @@ final class RelationshipManagerTests: XCTestCase {
         XCTAssertEqual(Set(child.parents.map(\.persistentModelID)), Set([a.persistentModelID, b.persistentModelID]))
     }
 
-    func testSetSpouseReflectsBothDirectionsAndClearsOldSpouses() throws {
+    func testSetSpouseRefusesToReplaceExistingSpouses() throws {
         let container = try makeContainer()
         let a = Person(name: "A")
         let oldA = Person(name: "Aの旧配偶者")
@@ -62,12 +62,163 @@ final class RelationshipManagerTests: XCTestCase {
         RelationshipManager.setSpouse(a, oldA)
         RelationshipManager.setSpouse(b, oldB)
 
-        RelationshipManager.setSpouse(a, b)
+        let linked = RelationshipManager.setSpouse(a, b)
 
+        XCTAssertFalse(linked)
+        XCTAssertEqual(a.spouse?.persistentModelID, oldA.persistentModelID)
+        XCTAssertEqual(oldA.spouse?.persistentModelID, a.persistentModelID)
+        XCTAssertEqual(b.spouse?.persistentModelID, oldB.persistentModelID)
+        XCTAssertEqual(oldB.spouse?.persistentModelID, b.persistentModelID)
+        XCTAssertFalse(RelationshipManager.canLink(.spouse, person: a, relative: b))
+    }
+
+    func testSpouseLinkIsBidirectional() throws {
+        let container = try makeContainer()
+        let a = Person(name: "A")
+        let b = Person(name: "B")
+        try insert([a, b], into: container.mainContext)
+
+        XCTAssertTrue(try RelationshipManager.link(.spouse, person: a, relative: b))
         XCTAssertEqual(a.spouse?.persistentModelID, b.persistentModelID)
         XCTAssertEqual(b.spouse?.persistentModelID, a.persistentModelID)
-        XCTAssertNil(oldA.spouse)
-        XCTAssertNil(oldB.spouse)
+    }
+
+    func testExistingChildCanBeSelectedAsSharedChildAfterSpouseIsAdded() throws {
+        let container = try makeContainer()
+        let a = Person(name: "A")
+        let b = Person(name: "B")
+        let child = Person(name: "C")
+        try insert([a, b, child], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: a, child: child))
+        XCTAssertTrue(RelationshipManager.setSpouse(a, b))
+
+        XCTAssertEqual(
+            RelationshipManager.sharedChildCandidates(of: a, with: b).map(\.persistentModelID),
+            [child.persistentModelID]
+        )
+        XCTAssertEqual(
+            RelationshipManager.linkSharedChildren([child, child], of: a, with: b),
+            1
+        )
+
+        XCTAssertEqual(a.children.filter { $0.persistentModelID == child.persistentModelID }.count, 1)
+        XCTAssertEqual(b.children.filter { $0.persistentModelID == child.persistentModelID }.count, 1)
+        XCTAssertEqual(
+            Set(child.parents.map(\.persistentModelID)),
+            Set([a.persistentModelID, b.persistentModelID])
+        )
+    }
+
+    func testUnselectedExistingChildIsNotInferredAsSharedChild() throws {
+        let container = try makeContainer()
+        let a = Person(name: "A")
+        let b = Person(name: "B")
+        let child = Person(name: "C")
+        try insert([a, b, child], into: container.mainContext)
+        RelationshipManager.addParentChild(parent: a, child: child)
+        RelationshipManager.setSpouse(a, b)
+
+        XCTAssertEqual(RelationshipManager.linkSharedChildren([], of: a, with: b), 0)
+        XCTAssertTrue(b.children.isEmpty)
+        XCTAssertEqual(child.parents.map(\.persistentModelID), [a.persistentModelID])
+    }
+
+    func testChildLinkDoesNotInferSpouseUnlessExplicitlyRequested() throws {
+        let container = try makeContainer()
+        let a = Person(name: "A")
+        let b = Person(name: "B")
+        let child = Person(name: "C")
+        try insert([a, b, child], into: container.mainContext)
+        RelationshipManager.setSpouse(a, b)
+
+        XCTAssertTrue(
+            try RelationshipManager.link(
+                .child,
+                person: a,
+                relative: child,
+                includeSpouseForChild: false
+            )
+        )
+        XCTAssertTrue(a.children.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertFalse(b.children.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertEqual(child.parents.map(\.persistentModelID), [a.persistentModelID])
+    }
+
+    func testSelfRelationsAreRejectedByAPIAndCandidateFilter() throws {
+        let container = try makeContainer()
+        let person = Person(name: "本人")
+        try insert([person], into: container.mainContext)
+
+        XCTAssertFalse(RelationshipManager.setSpouse(person, person))
+        XCTAssertFalse(RelationshipManager.addParentChild(parent: person, child: person))
+        XCTAssertFalse(RelationshipManager.canLink(.spouse, person: person, relative: person))
+        XCTAssertFalse(RelationshipManager.canLink(.parent, person: person, relative: person))
+        XCTAssertFalse(RelationshipManager.canLink(.child, person: person, relative: person))
+        XCTAssertThrowsError(
+            try RelationshipManager.link(.child, person: person, relative: person)
+        ) { error in
+            XCTAssertEqual(error as? RelationshipLinkError, .selfRelation)
+        }
+    }
+
+    func testParentLimitIsEnforcedByAPIAndCandidateFilter() throws {
+        let container = try makeContainer()
+        let child = Person(name: "子")
+        let parent1 = Person(name: "親1")
+        let parent2 = Person(name: "親2")
+        let parent3 = Person(name: "親3")
+        try insert([child, parent1, parent2, parent3], into: container.mainContext)
+
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parent1, child: child))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parent2, child: child))
+        XCTAssertFalse(RelationshipManager.addParentChild(parent: parent3, child: child))
+        XCTAssertFalse(RelationshipManager.canLink(.parent, person: child, relative: parent3))
+        XCTAssertEqual(child.parents.count, 2)
+        XCTAssertThrowsError(
+            try RelationshipManager.link(.parent, person: child, relative: parent3)
+        ) { error in
+            XCTAssertEqual(error as? RelationshipLinkError, .parentLimit)
+        }
+    }
+
+    func testExistingPeopleCanBeLinkedWithoutCreatingDuplicatePersonRecords() throws {
+        let container = try makeContainer()
+        let person = Person(name: "本人")
+        let spouse = Person(name: "登録済み配偶者")
+        let parent = Person(name: "登録済み親")
+        let child = Person(name: "登録済み子")
+        try insert([person, spouse, parent, child], into: container.mainContext)
+
+        try QuickRelativeRegistration.linkExisting(
+            spouse,
+            kind: .spouse,
+            for: person,
+            in: container.mainContext
+        )
+        try QuickRelativeRegistration.linkExisting(
+            parent,
+            kind: .parent,
+            for: person,
+            in: container.mainContext
+        )
+        try QuickRelativeRegistration.linkExisting(
+            child,
+            kind: .child,
+            for: person,
+            in: container.mainContext,
+            includeSpouseForChild: false
+        )
+
+        XCTAssertEqual(
+            try container.mainContext.fetch(FetchDescriptor<Person>()).count,
+            4
+        )
+        XCTAssertEqual(person.spouse?.persistentModelID, spouse.persistentModelID)
+        XCTAssertTrue(person.parents.contains { $0.persistentModelID == parent.persistentModelID })
+        XCTAssertTrue(parent.children.contains { $0.persistentModelID == person.persistentModelID })
+        XCTAssertTrue(person.children.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertTrue(child.parents.contains { $0.persistentModelID == person.persistentModelID })
+        XCTAssertFalse(spouse.children.contains { $0.persistentModelID == child.persistentModelID })
     }
 
     func testDetachAllRemovesEveryReciprocalRelationship() throws {

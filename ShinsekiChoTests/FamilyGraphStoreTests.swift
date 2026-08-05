@@ -440,14 +440,15 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertLessThan(elapsed, 0.5)
   }
 
-  func testQuickChildRegistrationCreatesNameOnlyAndConnectsBothDirections() throws {
+  func testQuickChildRegistrationCreatesNameOnlyAndLinksSelectedSpouse() throws {
     let fixture = try makeFixture()
 
     let child = try QuickRelativeRegistration.create(
       named: "  その場で会った子  ",
       kind: .child,
       for: fixture.a,
-      in: fixture.container.mainContext
+      in: fixture.container.mainContext,
+      includeSpouseForChild: true
     )
 
     XCTAssertEqual(child.name, "その場で会った子")
@@ -692,8 +693,8 @@ final class FamilyGraphStoreTests: XCTestCase {
     [a, b, c, d].forEach(container.mainContext.insert)
     try container.mainContext.save()
     RelationshipManager.setSpouse(a, b)
-    RelationshipManager.addChild(c, to: a)
-    RelationshipManager.addChild(d, to: a)
+    RelationshipManager.addChild(c, to: a, includeSpouse: true)
+    RelationshipManager.addChild(d, to: a, includeSpouse: true)
 
     let store = FamilyGraphStore()
     store.reset(with: a)
@@ -721,6 +722,47 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertFalse(remainingIndividualEdges.contains { edge in
       [key(c), key(d)].contains(edge.from) || [key(c), key(d)].contains(edge.to)
     })
+  }
+
+  func testLaterSpouseAndSelectedExistingChildProduceCoupleKnotModel() throws {
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try ModelContainer(
+      for: Person.self,
+      Gathering.self,
+      configurations: configuration
+    )
+    let a = Person(name: "A", isSelf: true)
+    let b = Person(name: "B")
+    let child = Person(name: "C")
+    [a, b, child].forEach(container.mainContext.insert)
+    try container.mainContext.save()
+
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: a, child: child))
+    XCTAssertTrue(RelationshipManager.setSpouse(a, b))
+    XCTAssertEqual(RelationshipManager.linkSharedChildren([child], of: a, with: b), 1)
+
+    let store = FamilyGraphStore()
+    store.reset(with: a)
+    store.expand(a)
+    let model = store.coupleRenderModel
+
+    XCTAssertEqual(model.knots.count, 1)
+    XCTAssertEqual(model.knots[0].commonChildren, [key(child)])
+    XCTAssertEqual(
+      model.segments.filter { $0.id.role == .spouseArm }.count,
+      2
+    )
+    XCTAssertEqual(
+      model.segments.filter { $0.id.role == .childStem }.map(\.id.person),
+      [key(child)]
+    )
+    XCTAssertTrue(
+      store.edges
+        .filter { model.suppressedEdgeIDs.contains($0.id) }
+        .contains { edge in
+          (edge.from == key(a) || edge.from == key(b)) && edge.to == key(child)
+        }
+    )
   }
 
   func testLocalLayoutKeepsSpouseAndSiblingsHorizontalAndGenerationsVertical() throws {

@@ -272,6 +272,9 @@ struct RelationEditorView: View {
     private var allPersons: [Person]
 
     @State private var showingPurchaseSheet = false
+    @State private var pendingChildCandidate: Person?
+    @State private var sharedChildPrompt: SharedChildPrompt?
+    @State private var errorMessage: String?
 
     private var candidates: [Person] {
         allPersons.filter { $0.persistentModelID != person.persistentModelID }
@@ -293,10 +296,28 @@ struct RelationEditorView: View {
                         }
                     } else {
                         Menu("配偶者を選ぶ") {
-                            ForEach(candidates) { candidate in
+                            ForEach(candidates.filter {
+                                RelationshipManager.canLink(.spouse, person: person, relative: $0)
+                            }) { candidate in
                                 Button(candidate.name) {
-                                    performEdit {
-                                        RelationshipManager.setSpouse(person, candidate)
+                                    performEdit({
+                                        try RelationshipManager.link(
+                                            .spouse,
+                                            person: person,
+                                            relative: candidate
+                                        )
+                                    }) {
+                                        let children = RelationshipManager.sharedChildCandidates(
+                                            of: person,
+                                            with: candidate
+                                        )
+                                        if !children.isEmpty {
+                                            sharedChildPrompt = SharedChildPrompt(
+                                                person: person,
+                                                spouse: candidate,
+                                                candidates: children
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -321,10 +342,16 @@ struct RelationEditorView: View {
                     }
                     if person.parents.count < 2 {
                         Menu("親を追加") {
-                            ForEach(candidates.filter { !person.parents.contains($0) }) { candidate in
+                            ForEach(candidates.filter {
+                                RelationshipManager.canLink(.parent, person: person, relative: $0)
+                            }) { candidate in
                                 Button(candidate.name) {
                                     performEdit {
-                                        RelationshipManager.addParentChild(parent: candidate, child: person)
+                                        try RelationshipManager.link(
+                                            .parent,
+                                            person: person,
+                                            relative: candidate
+                                        )
                                     }
                                 }
                             }
@@ -348,16 +375,25 @@ struct RelationEditorView: View {
                         }
                     }
                     Menu("子を追加") {
-                        ForEach(candidates.filter { !person.children.contains($0) }) { candidate in
+                        ForEach(candidates.filter {
+                            RelationshipManager.canLink(.child, person: person, relative: $0)
+                        }) { candidate in
                             Button(candidate.name) {
-                                performEdit {
-                                    RelationshipManager.addChild(candidate, to: person)
-                                }
+                                pendingChildCandidate = candidate
                             }
                         }
                     }
                 }
                 .listRowBackground(AppTheme.paperRaised)
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(AppTheme.attention)
+                    }
+                    .listRowBackground(AppTheme.paperRaised)
+                }
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.paper)
@@ -371,14 +407,155 @@ struct RelationEditorView: View {
             .sheet(isPresented: $showingPurchaseSheet) {
                 PurchaseSheet()
             }
+            .sheet(item: $sharedChildPrompt) { prompt in
+                SharedChildrenLinkSheet(prompt: prompt) { selectedChildren in
+                    performEdit {
+                        RelationshipManager.linkSharedChildren(
+                            selectedChildren,
+                            of: prompt.person,
+                            with: prompt.spouse
+                        )
+                    }
+                }
+            }
+            .confirmationDialog(
+                "子として追加",
+                isPresented: Binding(
+                    get: { pendingChildCandidate != nil },
+                    set: { if !$0 { pendingChildCandidate = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingChildCandidate
+            ) { candidate in
+                Button("\(person.name)だけの子として追加") {
+                    linkChild(candidate, includeSpouse: false)
+                }
+                if let spouse = person.spouse {
+                    Button("\(person.name)と\(spouse.name)の共同の子として追加") {
+                        linkChild(candidate, includeSpouse: true)
+                    }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: { _ in
+                Text("共同の子にする場合だけ、配偶者との親子関係も追加します。")
+            }
         }
     }
 
-    private func performEdit(_ action: () -> Void) {
+    private func linkChild(_ child: Person, includeSpouse: Bool) {
+        pendingChildCandidate = nil
+        performEdit {
+            try RelationshipManager.link(
+                .child,
+                person: person,
+                relative: child,
+                includeSpouseForChild: includeSpouse
+            )
+        }
+    }
+
+    private func performEdit(
+        _ action: () throws -> Void,
+        onSuccess: () -> Void = {}
+    ) {
         if trialManager.canEdit {
-            action()
+            do {
+                try action()
+                try context.save()
+                errorMessage = nil
+                onSuccess()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         } else {
             showingPurchaseSheet = true
+        }
+    }
+}
+
+struct SharedChildPrompt: Identifiable {
+    let id = UUID()
+    let person: Person
+    let spouse: Person
+    let candidates: [Person]
+}
+
+struct SharedChildrenLinkSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let prompt: SharedChildPrompt
+    let onLink: ([Person]) -> Void
+
+    @State private var selectedIDs = Set<PersistentIdentifier>()
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("この配偶者との子として紐づける人物を選んでください。選ばなかった子の関係は変更しません。")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.inkSoft)
+                }
+                .listRowBackground(AppTheme.paperRaised)
+
+                Section("既存の子") {
+                    ForEach(prompt.candidates) { child in
+                        Button {
+                            toggle(child)
+                        } label: {
+                            HStack {
+                                Text(child.name)
+                                    .foregroundStyle(AppTheme.ink)
+                                Spacer()
+                                Image(
+                                    systemName: selectedIDs.contains(child.persistentModelID)
+                                        ? "checkmark.circle.fill"
+                                        : "circle"
+                                )
+                                .foregroundStyle(
+                                    selectedIDs.contains(child.persistentModelID)
+                                        ? AppTheme.ai
+                                        : AppTheme.ruleStrong
+                                )
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("sharedChild.candidate.\(child.name)")
+                    }
+                }
+                .listRowBackground(AppTheme.paperRaised)
+            }
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.paper)
+            .navigationTitle("共同の子を選ぶ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("あとで") { dismiss() }
+                        .accessibilityIdentifier("sharedChild.later")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("紐づける") {
+                        let selected = prompt.candidates.filter {
+                            selectedIDs.contains($0.persistentModelID)
+                        }
+                        onLink(selected)
+                        dismiss()
+                    }
+                    .disabled(selectedIDs.isEmpty)
+                    .accessibilityIdentifier("sharedChild.link")
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(AppTheme.paper)
+        .accessibilityIdentifier("sharedChild.sheet")
+    }
+
+    private func toggle(_ child: Person) {
+        if selectedIDs.contains(child.persistentModelID) {
+            selectedIDs.remove(child.persistentModelID)
+        } else {
+            selectedIDs.insert(child.persistentModelID)
         }
     }
 }
