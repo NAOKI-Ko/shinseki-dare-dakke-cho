@@ -146,7 +146,10 @@ final class ShinsekiChoUITests: XCTestCase {
   }
 
   func testSeededGraphExpansionGesturesResetGatheringPhotoAndPersistence() {
-    var app = launch(seed: true)
+    var app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-family-graph-ux"]
+    )
     XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
     showList(in: app)
     let selfCell = element("person.cell.山田 太郎", in: app)
@@ -170,6 +173,13 @@ final class ShinsekiChoUITests: XCTestCase {
 
     let canvas = element("connectionMap.canvas", in: app)
     XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+    let introCompleted = expectation(
+      for: NSPredicate { object, _ in
+        ((object as? XCUIElement)?.value as? String)?.hasPrefix("完了|") == true
+      },
+      evaluatedWith: canvas
+    )
+    wait(for: [introCompleted], timeout: 3)
     func mapElement(_ identifier: String) -> XCUIElement {
       canvas.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
@@ -186,6 +196,10 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(legend.label.contains("外側の家系"))
     let selfNode = mapElement("connectionMap.node.山田 太郎")
     XCTAssertEqual(selfNode.frame.midX, app.frame.midX, accuracy: 2)
+    let resetButton = app.buttons["connectionMap.detail.resetButton"]
+    XCTAssertTrue(resetButton.waitForExistence(timeout: 3))
+    resetButton.tap()
+    let resetReferenceFrame = selfNode.frame
 
     let beforeExpansion = XCTAttachment(screenshot: app.screenshot())
     beforeExpansion.name = "つながりマップ_展開前_5ノード_ライト"
@@ -193,7 +207,7 @@ final class ShinsekiChoUITests: XCTestCase {
     add(beforeExpansion)
 
     let father = mapElement("connectionMap.node.山田 一郎")
-    XCTAssertEqual(father.value as? String, "未展開")
+    XCTAssertTrue((father.value as? String)?.hasPrefix("未展開") == true)
     let appFrame = app.frame
     let mapTop = app.staticTexts["つながり"].frame.maxY
     app.coordinate(
@@ -203,25 +217,24 @@ final class ShinsekiChoUITests: XCTestCase {
       )
     ).tap()
     XCTAssertTrue(mapElement("connectionMap.node.山田 次郎").waitForExistence(timeout: 3))
-    XCTAssertEqual(father.value as? String, "展開済み")
-    let initialSelfFrame = selfNode.frame
+    XCTAssertTrue((father.value as? String)?.hasPrefix("展開済み") == true)
+    let preGestureSelfFrame = selfNode.frame
     canvas.pinch(withScale: 1.4, velocity: 1)
     canvas.swipeLeft()
-    XCTAssertGreaterThan(abs(selfNode.frame.midX - initialSelfFrame.midX), 10)
-    let resetButton = app.buttons["connectionMap.detail.resetButton"]
-    XCTAssertTrue(resetButton.waitForExistence(timeout: 3))
+    XCTAssertGreaterThan(abs(selfNode.frame.midX - preGestureSelfFrame.midX), 10)
     resetButton.tap()
     let viewportReset = expectation(
       for: NSPredicate { _, _ in
         let resetFrame = selfNode.frame
-        return abs(resetFrame.midX - initialSelfFrame.midX) <= 2
-          && abs(resetFrame.midY - initialSelfFrame.midY) <= 2
+        let canvasValue = canvas.value as? String ?? ""
+        return abs(resetFrame.midX - resetReferenceFrame.midX) <= 2
+          && canvasValue.contains("scale:1.00")
       },
       evaluatedWith: selfNode
     )
     wait(for: [viewportReset], timeout: 3)
-    XCTAssertEqual(selfNode.frame.midX, initialSelfFrame.midX, accuracy: 2)
-    XCTAssertEqual(selfNode.frame.midY, initialSelfFrame.midY, accuracy: 2)
+    XCTAssertEqual(selfNode.frame.midX, resetReferenceFrame.midX, accuracy: 2)
+    XCTAssertTrue((canvas.value as? String)?.contains("scale:1.00") == true)
 
     let desiredMapTop: CGFloat = 150
     let pageAdjustment = desiredMapTop - app.staticTexts["つながり"].frame.maxY
@@ -639,7 +652,7 @@ final class ShinsekiChoUITests: XCTestCase {
           let element = object as? XCUIElement,
           let value = element.value as? String,
           let scaleText = value.components(separatedBy: "scale:").last,
-          let observedScale = Double(scaleText)
+          let observedScale = Double(scaleText.components(separatedBy: "|").first ?? "")
         else { return false }
         return abs(observedScale - expected) <= tolerance
       }
@@ -688,6 +701,7 @@ final class ShinsekiChoUITests: XCTestCase {
 
     let newNode = element("connectionMap.node.共同の子 UX", in: app)
     XCTAssertTrue(newNode.waitForExistence(timeout: 5))
+    XCTAssertTrue(element("connectionMap.knot", in: app).waitForExistence(timeout: 3))
     let mother = element("connectionMap.node.山田 花子", in: app)
     XCTAssertTrue(mother.waitForExistence(timeout: 5))
     mother.tap()
@@ -721,6 +735,78 @@ final class ShinsekiChoUITests: XCTestCase {
         )
       )
     keepScreenshot(app, name: "FamilyGraphUX_06_distant_relatives")
+  }
+
+  func testFamilyConstellationSpouseFocusAndCompletedPathTransition() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-family-graph-ux"]
+    )
+    let canvas = element("connectionMap.home.canvas", in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+
+    let spouse = element("connectionMap.node.佐藤 美咲", in: app)
+    XCTAssertTrue(spouse.waitForExistence(timeout: 5))
+    spouse.tap()
+    XCTAssertTrue((spouse.value as? String)?.contains("focus:focused") == true)
+    sleep(1)
+    keepScreenshot(app, name: "FamilyConstellation_03_spouse_focus")
+
+    let spouseFather = element("connectionMap.node.佐藤 修一", in: app)
+    XCTAssertTrue(spouseFather.waitForExistence(timeout: 5))
+    spouseFather.tap()
+    let spouseBrother = element("connectionMap.node.佐藤 健太", in: app)
+    XCTAssertTrue(spouseBrother.waitForExistence(timeout: 5))
+    spouseBrother.tap()
+    XCTAssertTrue((spouseBrother.value as? String)?.contains("focus:focused") == true)
+    sleep(1)
+    keepScreenshot(app, name: "FamilyConstellation_12_focus_transition_complete")
+  }
+
+  func testFamilyConstellationVisualEvidenceWithTwentyExpandedPeople() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-family-graph-ux"]
+    )
+    let canvas = element("connectionMap.home.canvas", in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+    let father = element("connectionMap.node.山田 一郎", in: app)
+    XCTAssertTrue(father.waitForExistence(timeout: 5))
+    father.tap()
+
+    func addJointChild(number: Int) {
+      father.press(forDuration: 0.7)
+      let childAction = app.buttons["connectionMap.menu.child"]
+      XCTAssertTrue(childAction.waitForExistence(timeout: 3))
+      childAction.tap()
+      let field = element("quickRelative.name", in: app)
+      XCTAssertTrue(field.waitForExistence(timeout: 3))
+      let name = "共同の子 \(number)"
+      field.typeText(name)
+      app.buttons["quickRelative.save"].tap()
+      XCTAssertTrue(
+        element("connectionMap.node.\(name)", in: app).waitForExistence(timeout: 5)
+      )
+    }
+
+    for number in 1...12 {
+      addJointChild(number: number)
+    }
+
+    let spouse = element("connectionMap.node.佐藤 美咲", in: app)
+    XCTAssertTrue(spouse.waitForExistence(timeout: 5))
+    spouse.tap()
+    let spouseFather = element("connectionMap.node.佐藤 修一", in: app)
+    XCTAssertTrue(spouseFather.waitForExistence(timeout: 5))
+    spouseFather.tap()
+    let spouseBrother = element("connectionMap.node.佐藤 健太", in: app)
+    XCTAssertTrue(spouseBrother.waitForExistence(timeout: 5))
+
+    app.buttons["connectionMap.resetButton"].tap()
+    canvas.pinch(withScale: 0.4, velocity: -1)
+    XCTAssertTrue((canvas.value as? String)?.contains("nodes:20") == true)
+    sleep(1)
+    keepScreenshot(app, name: "FamilyConstellation_08_twenty_people")
   }
 
   func testMapContextMenuDetailNavigationAndAvailableParentAction() {

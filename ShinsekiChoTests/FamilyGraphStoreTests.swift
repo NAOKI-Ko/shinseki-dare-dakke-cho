@@ -586,6 +586,174 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertGreaterThan(distantPresentation.nodeScale, 0)
   }
 
+  func testOnlyFocusedPersonGetsStrongAdornmentAndSelfUsesSubtleMarkerOtherwise() {
+    XCTAssertEqual(
+      GraphFocusAdornmentPolicy.adornment(isSelf: true, isFocused: true),
+      GraphFocusAdornment(showsStrongFocus: true, showsSelfMarker: false)
+    )
+    XCTAssertEqual(
+      GraphFocusAdornmentPolicy.adornment(isSelf: false, isFocused: true),
+      GraphFocusAdornment(showsStrongFocus: true, showsSelfMarker: false)
+    )
+    XCTAssertEqual(
+      GraphFocusAdornmentPolicy.adornment(isSelf: true, isFocused: false),
+      GraphFocusAdornment(showsStrongFocus: false, showsSelfMarker: true)
+    )
+    XCTAssertEqual(
+      GraphFocusAdornmentPolicy.adornment(isSelf: false, isFocused: false),
+      GraphFocusAdornment(showsStrongFocus: false, showsSelfMarker: false)
+    )
+  }
+
+  func testNodeLODClampsScreenSizeAndKeepsEdgeAnchorOnDisplayedBead() {
+    let startCenter = CGPoint(x: 100, y: 100)
+    let endCenter = CGPoint(x: 300, y: 100)
+    let origin = CGPoint.zero
+
+    for scale: CGFloat in [0.4, 1.0, 2.5] {
+      let lod = GraphNodeLODPolicy.presentation(cameraScale: scale, focusScale: 1)
+      XCTAssertGreaterThanOrEqual(
+        lod.screenDiameter,
+        GraphNodeLODPolicy.minimumScreenDiameter
+      )
+      XCTAssertLessThanOrEqual(
+        lod.screenDiameter,
+        GraphNodeLODPolicy.maximumScreenDiameter
+      )
+
+      let anchors = GraphCanvasGeometry.edgeAnchors(
+        from: startCenter,
+        to: endCenter,
+        startRadius: lod.canvasRadius,
+        endRadius: lod.canvasRadius
+      )
+      let transform = GraphViewportTransform(scale: scale, offset: .zero)
+      let displayedCenter = transform.applying(to: startCenter, around: origin)
+      let displayedAnchor = transform.applying(to: anchors.start, around: origin)
+      XCTAssertEqual(
+        hypot(
+          displayedAnchor.x - displayedCenter.x,
+          displayedAnchor.y - displayedCenter.y
+        ),
+        lod.screenDiameter / 2,
+        accuracy: 0.001
+      )
+    }
+
+    XCTAssertEqual(
+      GraphNodeLODPolicy.presentation(cameraScale: 0.4, focusScale: 1).screenDiameter,
+      28,
+      accuracy: 0.001
+    )
+    XCTAssertEqual(
+      GraphNodeLODPolicy.presentation(cameraScale: 1, focusScale: 1).screenDiameter,
+      56,
+      accuracy: 0.001
+    )
+    XCTAssertEqual(
+      GraphNodeLODPolicy.presentation(cameraScale: 2.5, focusScale: 1).screenDiameter,
+      78,
+      accuracy: 0.001
+    )
+  }
+
+  func testFocusTransitionCentersTargetWithoutChangingCameraScale() {
+    let offset = GraphFocusTransition.centeredOffset(
+      position: GraphGridPosition(level: -2, slot: 3),
+      cameraScale: 1.4,
+      slotWidth: 108,
+      levelHeight: 120
+    )
+    XCTAssertEqual(offset.width, -453.6, accuracy: 0.001)
+    XCTAssertEqual(offset.height, 336, accuracy: 0.001)
+  }
+
+  func testLineLODUsesStableScreenWidthAcrossCameraScales() {
+    for scale: CGFloat in [0.4, 1, 2.5] {
+      let canvasWidth = GraphLineLODPolicy.canvasWidth(
+        screenWidth: 1.5,
+        cameraScale: scale
+      )
+      XCTAssertEqual(canvasWidth * scale, 1.5, accuracy: 0.001)
+    }
+  }
+
+  func testCoupleKnotReplacesDuplicateParentChildVisualEdges() throws {
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try ModelContainer(
+      for: Person.self,
+      Gathering.self,
+      configurations: configuration
+    )
+    let a = Person(name: "父", isSelf: true)
+    let b = Person(name: "母")
+    let c = Person(name: "子C")
+    let d = Person(name: "子D")
+    [a, b, c, d].forEach(container.mainContext.insert)
+    try container.mainContext.save()
+    RelationshipManager.setSpouse(a, b)
+    RelationshipManager.addChild(c, to: a)
+    RelationshipManager.addChild(d, to: a)
+
+    let store = FamilyGraphStore()
+    store.reset(with: a)
+    store.expand(a)
+    let model = store.coupleRenderModel
+
+    XCTAssertEqual(model.knots.count, 1)
+    XCTAssertEqual(Set(model.knots[0].commonChildren), Set([key(c), key(d)]))
+    XCTAssertEqual(
+      model.segments.filter { $0.id.role == .spouseArm }.count,
+      2
+    )
+    XCTAssertEqual(
+      model.segments.filter { $0.id.role == .childStem }.count,
+      2
+    )
+    XCTAssertEqual(
+      Set(model.segments.filter { $0.id.role == .childStem }.map(\.id.person)),
+      Set([key(c), key(d)])
+    )
+
+    let remainingIndividualEdges = store.edges.filter {
+      !model.suppressedEdgeIDs.contains($0.id)
+    }
+    XCTAssertFalse(remainingIndividualEdges.contains { edge in
+      [key(c), key(d)].contains(edge.from) || [key(c), key(d)].contains(edge.to)
+    })
+  }
+
+  func testLocalLayoutKeepsSpouseAndSiblingsHorizontalAndGenerationsVertical() throws {
+    let fixture = try makeFixture()
+    let sibling = Person(name: "きょうだい")
+    fixture.container.mainContext.insert(sibling)
+    try fixture.container.mainContext.save()
+    RelationshipManager.addParentChild(parent: fixture.b, child: sibling)
+
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.a)
+    store.expand(fixture.a)
+    let originalPositions = Dictionary(
+      uniqueKeysWithValues: store.nodes.map { ($0.key, ($0.value.level, $0.value.slot)) }
+    )
+    store.expand(fixture.b)
+
+    let selfNode = try XCTUnwrap(store.nodes[key(fixture.a)])
+    let spouseNode = try XCTUnwrap(store.nodes[key(fixture.c)])
+    let parentNode = try XCTUnwrap(store.nodes[key(fixture.b)])
+    let childNode = try XCTUnwrap(store.nodes[key(fixture.d)])
+    let siblingNode = try XCTUnwrap(store.nodes[key(sibling)])
+    XCTAssertEqual(spouseNode.level, selfNode.level)
+    XCTAssertEqual(abs(spouseNode.slot - selfNode.slot), 1)
+    XCTAssertLessThan(parentNode.level, selfNode.level)
+    XCTAssertGreaterThan(childNode.level, selfNode.level)
+    XCTAssertEqual(siblingNode.level, selfNode.level)
+    for (id, position) in originalPositions {
+      XCTAssertEqual(store.nodes[id]?.level, position.0)
+      XCTAssertEqual(store.nodes[id]?.slot, position.1)
+    }
+  }
+
   func testQuickRegistrationMenuAndSaveBothEnforceSpouseAndParentLimits() throws {
     let fixture = try makeFixture()
     XCTAssertFalse(QuickRelativeRegistration.canAdd(.spouse, to: fixture.a))

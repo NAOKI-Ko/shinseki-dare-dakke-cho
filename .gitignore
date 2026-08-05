@@ -30,3 +30,16 @@ Screenshots/*/
 *.swp
 *.tmp
 *~
+
+# Local secrets and signing credentials
+.env
+.env.*
+!.env.example
+*.mobileprovision
+*.p12
+*.pem
+*.key
+GoogleService-Info.plist
+Secrets.xcconfig
+Local.xcconfig
+*.private.xcconfig

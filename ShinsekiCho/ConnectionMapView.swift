@@ -27,7 +27,7 @@ struct GraphEdge: Identifiable {
   let from: PersistentModelIDBox
   let to: PersistentModelIDBox
   let kind: Kind
-  enum Kind { case parentChild, spouse }
+  enum Kind: Hashable { case parentChild, spouse }
 
   var endpoints: GraphEdgeEndpoints {
     GraphEdgeEndpoints(from, to)
@@ -43,17 +43,161 @@ struct GraphEdgeEndpoints: Hashable {
   }
 }
 
+/// Personとして保存しない、夫婦関係1組を表すrender専用ID。
+struct GraphCoupleID: Hashable {
+  let people: Set<PersistentModelIDBox>
+
+  init(_ first: PersistentModelIDBox, _ second: PersistentModelIDBox) {
+    people = [first, second]
+  }
+}
+
+struct GraphCoupleKnot: Identifiable, Hashable {
+  let id: GraphCoupleID
+  let first: PersistentModelIDBox
+  let second: PersistentModelIDBox
+  let commonChildren: [PersistentModelIDBox]
+}
+
+enum GraphKnotSegmentRole: String, Hashable {
+  case spouseArm
+  case childStem
+}
+
+struct GraphKnotSegmentID: Hashable {
+  let couple: GraphCoupleID
+  let role: GraphKnotSegmentRole
+  let person: PersistentModelIDBox
+}
+
+enum GraphRenderEndpoint: Hashable {
+  case person(PersistentModelIDBox)
+  case knot(GraphCoupleID)
+}
+
+struct GraphKnotSegment: Identifiable, Hashable {
+  let id: GraphKnotSegmentID
+  let from: GraphRenderEndpoint
+  let to: GraphRenderEndpoint
+  let kind: GraphEdge.Kind
+  let sourceEdges: Set<GraphEdgeEndpoints>
+  let sourceEdgeIDs: Set<UUID>
+  let branchNodeID: PersistentModelIDBox
+}
+
+struct GraphCoupleRenderModel: Equatable {
+  var knots: [GraphCoupleKnot] = []
+  var segments: [GraphKnotSegment] = []
+  var suppressedEdgeIDs: Set<UUID> = []
+}
+
+/// 現在表示中の人物と関係だけから、夫婦の結び目と描画線を生成する。
+/// SwiftDataへは保存せず、グラフ展開時だけ再計算する。
+enum GraphCoupleRenderBuilder {
+  static func build(
+    nodes: [PersistentModelIDBox: GraphNode],
+    edges: [GraphEdge]
+  ) -> GraphCoupleRenderModel {
+    var result = GraphCoupleRenderModel()
+
+    for spouseEdge in edges where spouseEdge.kind == .spouse {
+      guard
+        let firstNode = nodes[spouseEdge.from],
+        let secondNode = nodes[spouseEdge.to]
+      else { continue }
+
+      let firstChildren = Set(firstNode.person.children.map {
+        PersistentModelIDBox($0.persistentModelID)
+      })
+      let secondChildren = Set(secondNode.person.children.map {
+        PersistentModelIDBox($0.persistentModelID)
+      })
+      let commonChildren = firstChildren.intersection(secondChildren)
+        .filter { nodes[$0] != nil }
+        .sorted {
+          let lhs = nodes[$0]
+          let rhs = nodes[$1]
+          if lhs?.level != rhs?.level { return (lhs?.level ?? 0) < (rhs?.level ?? 0) }
+          if lhs?.slot != rhs?.slot { return (lhs?.slot ?? 0) < (rhs?.slot ?? 0) }
+          return (lhs?.person.name ?? "") < (rhs?.person.name ?? "")
+        }
+      guard !commonChildren.isEmpty else { continue }
+
+      let coupleID = GraphCoupleID(spouseEdge.from, spouseEdge.to)
+      result.suppressedEdgeIDs.insert(spouseEdge.id)
+      let spouseSource = GraphEdgeEndpoints(spouseEdge.from, spouseEdge.to)
+
+      for spouseID in [spouseEdge.from, spouseEdge.to] {
+        result.segments.append(
+          GraphKnotSegment(
+            id: GraphKnotSegmentID(
+              couple: coupleID,
+              role: .spouseArm,
+              person: spouseID
+            ),
+            from: .person(spouseID),
+            to: .knot(coupleID),
+            kind: .spouse,
+            sourceEdges: [spouseSource],
+            sourceEdgeIDs: [spouseEdge.id],
+            branchNodeID: spouseID
+          )
+        )
+      }
+
+      for childID in commonChildren {
+        let parentEndpoints = [spouseEdge.from, spouseEdge.to].map {
+          GraphEdgeEndpoints($0, childID)
+        }
+        let parentEdges = edges.filter { edge in
+          edge.kind == .parentChild && parentEndpoints.contains(edge.endpoints)
+        }
+        result.suppressedEdgeIDs.formUnion(parentEdges.map(\.id))
+        result.segments.append(
+          GraphKnotSegment(
+            id: GraphKnotSegmentID(
+              couple: coupleID,
+              role: .childStem,
+              person: childID
+            ),
+            from: .knot(coupleID),
+            to: .person(childID),
+            kind: .parentChild,
+            sourceEdges: Set(parentEndpoints),
+            sourceEdgeIDs: Set(parentEdges.map(\.id)),
+            branchNodeID: childID
+          )
+        )
+      }
+
+      result.knots.append(
+        GraphCoupleKnot(
+          id: coupleID,
+          first: spouseEdge.from,
+          second: spouseEdge.to,
+          commonChildren: commonChildren
+        )
+      )
+    }
+    return result
+  }
+}
+
 /// 人物詳細で強調する「自分から表示中人物まで」の線だけを抽出する。
 enum GraphPathEmphasis {
+  static func orderedEdgeEndpoints(for route: RelationRoute?) -> [GraphEdgeEndpoints] {
+    guard let route, route.people.count > 1 else { return [] }
+    return zip(route.people, route.people.dropFirst()).map { first, second in
+      GraphEdgeEndpoints(
+        PersistentModelIDBox(first.persistentModelID),
+        PersistentModelIDBox(second.persistentModelID)
+      )
+    }
+  }
+
   static func edgeEndpoints(for route: RelationRoute?) -> Set<GraphEdgeEndpoints>? {
-    guard let route, route.people.count > 1 else { return nil }
-    return Set(
-      zip(route.people, route.people.dropFirst()).map { first, second in
-        GraphEdgeEndpoints(
-          PersistentModelIDBox(first.persistentModelID),
-          PersistentModelIDBox(second.persistentModelID)
-        )
-      })
+    let ordered = orderedEdgeEndpoints(for: route)
+    return ordered.isEmpty ? nil : Set(ordered)
   }
 }
 
@@ -149,6 +293,8 @@ struct GraphFocusPresentation: Equatable {
   let nodeOpacity: Double
   let nodeScale: CGFloat
   let edgeOpacity: Double
+  let saturation: Double
+  let contrast: Double
 }
 
 /// フォーカス人物からの距離を、読みやすさを保つ控えめな奥行きへ変換する。
@@ -160,30 +306,90 @@ enum GraphFocusHierarchy {
         band: .focused,
         nodeOpacity: 1,
         nodeScale: 1.06,
-        edgeOpacity: 1
+        edgeOpacity: 1,
+        saturation: 1,
+        contrast: 1.04
       )
     case 1:
       GraphFocusPresentation(
         band: .direct,
         nodeOpacity: 0.96,
         nodeScale: 1,
-        edgeOpacity: 0.88
+        edgeOpacity: 0.88,
+        saturation: 0.98,
+        contrast: 1
       )
     case 2:
       GraphFocusPresentation(
         band: .distanceTwo,
         nodeOpacity: 0.76,
         nodeScale: 0.94,
-        edgeOpacity: 0.68
+        edgeOpacity: 0.68,
+        saturation: 0.9,
+        contrast: 0.97
       )
     default:
       GraphFocusPresentation(
         band: .further,
         nodeOpacity: 0.56,
         nodeScale: 0.9,
-        edgeOpacity: 0.48
+        edgeOpacity: 0.48,
+        saturation: 0.82,
+        contrast: 0.94
       )
     }
+  }
+}
+
+struct GraphNodeLODPresentation: Equatable {
+  let screenDiameter: CGFloat
+  let localScale: CGFloat
+  let canvasRadius: CGFloat
+}
+
+/// 人物の位置間隔はカメラ倍率に従わせつつ、珠と文字の画面上サイズだけを
+/// 読める範囲へ制限する。線端も同じcanvasRadiusを使う。
+enum GraphNodeLODPolicy {
+  static let minimumScreenDiameter: CGFloat = 28
+  static let standardDiameter: CGFloat = 56
+  static let maximumScreenDiameter: CGFloat = 78
+
+  static func presentation(
+    cameraScale: CGFloat,
+    focusScale: CGFloat
+  ) -> GraphNodeLODPresentation {
+    let safeCameraScale = max(abs(cameraScale), 0.0001)
+    let proposedDiameter = standardDiameter * safeCameraScale * focusScale
+    let screenDiameter = min(
+      max(proposedDiameter, minimumScreenDiameter),
+      maximumScreenDiameter
+    )
+    return GraphNodeLODPresentation(
+      screenDiameter: screenDiameter,
+      localScale: screenDiameter / (standardDiameter * safeCameraScale),
+      canvasRadius: screenDiameter / (2 * safeCameraScale)
+    )
+  }
+}
+
+enum GraphLineLODPolicy {
+  static func canvasWidth(screenWidth: CGFloat, cameraScale: CGFloat) -> CGFloat {
+    screenWidth / max(abs(cameraScale), 0.0001)
+  }
+}
+
+struct GraphFocusAdornment: Equatable {
+  let showsStrongFocus: Bool
+  let showsSelfMarker: Bool
+}
+
+/// 強い後光は常にフォーカス人物1人だけへ与える。
+enum GraphFocusAdornmentPolicy {
+  static func adornment(isSelf: Bool, isFocused: Bool) -> GraphFocusAdornment {
+    GraphFocusAdornment(
+      showsStrongFocus: isFocused,
+      showsSelfMarker: isSelf && !isFocused
+    )
   }
 }
 
@@ -303,6 +509,23 @@ enum GraphIntroLayout {
         width: -CGFloat(position.slot) * slotWidth,
         height: -CGFloat(position.level) * levelHeight
       )
+    )
+  }
+}
+
+enum GraphFocusTransition {
+  static let duration: TimeInterval = 0.46
+  static let illuminationIntervalNanoseconds: UInt64 = 110_000_000
+
+  static func centeredOffset(
+    position: GraphGridPosition,
+    cameraScale: CGFloat,
+    slotWidth: CGFloat,
+    levelHeight: CGFloat
+  ) -> CGSize {
+    CGSize(
+      width: -CGFloat(position.slot) * slotWidth * cameraScale,
+      height: -CGFloat(position.level) * levelHeight * cameraScale
     )
   }
 }
@@ -462,6 +685,7 @@ private struct GraphEdgeShape: Shape {
 /// 描画順序を1箇所に固定する契約。ZStack内でも必ずedge→nodeの順に置く。
 enum GraphRenderLayer: Double {
   case edges = 0
+  case knots = 0.5
   case nodes = 1
 }
 
@@ -480,16 +704,16 @@ enum GraphNodeSurfaceContract {
 final class FamilyGraphStore {
   private(set) var nodes: [PersistentModelIDBox: GraphNode] = [:]
   private(set) var edges: [GraphEdge] = []
-  private var nextSlot: [Int: Int] = [:]  // level -> 次に使う空きslot
+  private(set) var coupleRenderModel = GraphCoupleRenderModel()
   private var rootID: PersistentModelIDBox?
 
   /// 自分を起点にグラフを初期化する
   func reset(with selfPerson: Person) {
     nodes = [:]
     edges = []
-    nextSlot = [:]
+    coupleRenderModel = GraphCoupleRenderModel()
     rootID = PersistentModelIDBox(selfPerson.persistentModelID)
-    place(selfPerson, level: 0, path: [])
+    place(selfPerson, level: 0, preferredSlot: 0, path: [])
   }
 
   /// 指定した人物の直接のつながり(親・子・配偶者)を展開する。
@@ -497,34 +721,41 @@ final class FamilyGraphStore {
   func expand(_ person: Person) {
     guard let center = nodes[PersistentModelIDBox(person.persistentModelID)] else { return }
 
-    for parent in person.parents {
-      let node = placeIfNeeded(
+    for (index, parent) in person.parents.enumerated() {
+      _ = placeIfNeeded(
         parent,
         level: center.level - 1,
+        preferredSlot: center.slot + symmetricOffset(at: index),
         path: center.path + [.parent]
       )
       addEdgeIfNeeded(from: parent, to: person, kind: .parentChild)
-      _ = node
     }
-    for child in person.children {
+
+    var familyCenterSlot = center.slot
+    if let spouse = person.spouse {
+      let spouseNode = placeIfNeeded(
+        spouse,
+        level: center.level,
+        preferredSlot: center.slot + spouseDirection(from: center.slot),
+        path: center.path + [.spouse]
+      )
+      addEdgeIfNeeded(from: person, to: spouse, kind: .spouse)
+      familyCenterSlot = Int(round(Double(center.slot + spouseNode.slot) / 2))
+    }
+
+    for (index, child) in person.children.enumerated() {
       _ = placeIfNeeded(
         child,
         level: center.level + 1,
+        preferredSlot: familyCenterSlot + symmetricOffset(at: index),
         path: center.path + [.child]
       )
       addEdgeIfNeeded(from: person, to: child, kind: .parentChild)
     }
-    if let spouse = person.spouse {
-      _ = placeIfNeeded(
-        spouse,
-        level: center.level,
-        path: center.path + [.spouse]
-      )
-      addEdgeIfNeeded(from: person, to: spouse, kind: .spouse)
-    }
     // 兄弟姉妹は「共通の親」を介して自動的に見えるようになるため、
     // ここでは明示的なノード追加はしない(親を展開すれば子として現れる)。
     refreshShortestPaths()
+    coupleRenderModel = GraphCoupleRenderBuilder.build(nodes: nodes, edges: edges)
   }
 
   /// 自分から表示対象までの最短経路上にいる人物を順に展開する。
@@ -556,6 +787,7 @@ final class FamilyGraphStore {
   private func placeIfNeeded(
     _ person: Person,
     level: Int,
+    preferredSlot: Int,
     path: [RelationStep]
   ) -> GraphNode {
     let key = PersistentModelIDBox(person.persistentModelID)
@@ -568,27 +800,50 @@ final class FamilyGraphStore {
       }
       return existing
     }
-    return place(person, level: level, path: path)
+    return place(
+      person,
+      level: level,
+      preferredSlot: preferredSlot,
+      path: path
+    )
   }
 
   @discardableResult
   private func place(
     _ person: Person,
     level: Int,
+    preferredSlot: Int,
     path: [RelationStep]
   ) -> GraphNode {
-    let index = nextSlot[level, default: 0]
-    nextSlot[level] = index + 1
-    let slot: Int
-    if index == 0 {
-      slot = 0
-    } else {
-      let distance = (index + 1) / 2
-      slot = index.isMultiple(of: 2) ? distance : -distance
-    }
+    let slot = nearestAvailableSlot(level: level, preferred: preferredSlot)
     let node = GraphNode(person: person, level: level, slot: slot, path: path)
     nodes[PersistentModelIDBox(person.persistentModelID)] = node
     return node
+  }
+
+  private func nearestAvailableSlot(level: Int, preferred: Int) -> Int {
+    let occupied = Set(nodes.values.filter { $0.level == level }.map(\.slot))
+    if !occupied.contains(preferred) { return preferred }
+    for distance in 1...100 {
+      let candidates = preferred >= 0
+        ? [preferred + distance, preferred - distance]
+        : [preferred - distance, preferred + distance]
+      if let candidate = candidates.first(where: { !occupied.contains($0) }) {
+        return candidate
+      }
+    }
+    return preferred
+  }
+
+  private func spouseDirection(from slot: Int) -> Int {
+    slot < 0 ? -1 : 1
+  }
+
+  /// 0, -1, +1, -2, +2... の順で、同世代を中心から横へ広げる。
+  private func symmetricOffset(at index: Int) -> Int {
+    guard index > 0 else { return 0 }
+    let distance = (index + 1) / 2
+    return index.isMultiple(of: 2) ? distance : -distance
   }
 
   private func addEdgeIfNeeded(from: Person, to: Person, kind: GraphEdge.Kind) {
@@ -709,6 +964,8 @@ struct FamilyGraphView: View {
   @State private var visibleNodeIDs: Set<PersistentModelIDBox> = []
   @State private var edgeProgress: [UUID: CGFloat] = [:]
   @State private var emphasizedPathEdges: Set<GraphEdgeEndpoints>?
+  @State private var illuminatedPathEdges: Set<GraphEdgeEndpoints> = []
+  @State private var pathIlluminationToken = UUID()
   @State private var focusedNodeID: PersistentModelIDBox?
   @State private var focusDistances: [PersistentModelIDBox: Int] = [:]
   @State private var bouncingNodeID: PersistentModelIDBox?
@@ -756,24 +1013,78 @@ struct FamilyGraphView: View {
           // 線とノードを同じ未変換座標系に置き、親レイヤーへ一度だけ
           // パン・ズームを適用する。線だけ／ノードだけの二重変換を防ぐ。
           ZStack {
-            ForEach(store.edges) { edge in
+            ForEach(
+              store.edges.filter {
+                !store.coupleRenderModel.suppressedEdgeIDs.contains($0.id)
+              }
+            ) { edge in
               if let a = store.nodes[edge.from], let b = store.nodes[edge.to] {
-                let anchors = edgeAnchors(from: a, to: b, origin: origin)
+                let anchors = edgeAnchors(
+                  from: a,
+                  to: b,
+                  origin: origin,
+                  cameraScale: effectiveScale
+                )
                 let isEmphasized = emphasizedPathEdges?.contains(edge.endpoints) ?? true
+                let isIlluminated = illuminatedPathEdges.contains(edge.endpoints)
                 let normalWidth: CGFloat = edge.kind == .spouse ? 2.5 : 1.5
                 let focusOpacity = edgeFocusOpacity(for: edge)
                 GraphEdgeShape(start: anchors.start, end: anchors.end)
                   .trim(from: 0, to: edgeProgress[edge.id] ?? 0)
                   .stroke(
                     store.branch(for: edge).color.opacity(
-                      focusOpacity * (isEmphasized ? 1 : 0.35)
+                      min(
+                        isIlluminated ? 1 : focusOpacity * (isEmphasized ? 1 : 0.35),
+                        1
+                      )
                     ),
                     style: StrokeStyle(
-                      lineWidth: isEmphasized ? normalWidth : normalWidth * 0.5,
+                      lineWidth: GraphLineLODPolicy.canvasWidth(
+                        screenWidth: (isEmphasized ? normalWidth : normalWidth * 0.5)
+                          + (isIlluminated ? 0.7 : 0),
+                        cameraScale: effectiveScale
+                      ),
                       lineCap: .round,
                       lineJoin: .round
                     )
                   )
+                  .animation(.easeInOut(duration: 0.12), value: isIlluminated)
+                  .accessibilityHidden(true)
+              }
+            }
+
+            ForEach(store.coupleRenderModel.segments) { segment in
+              if let anchors = knotSegmentAnchors(
+                segment,
+                origin: origin,
+                cameraScale: effectiveScale
+              ) {
+                let isEmphasized = segmentIsEmphasized(segment)
+                let isIlluminated = segmentIsIlluminated(segment)
+                let normalWidth: CGFloat = segment.kind == .spouse ? 2.5 : 1.5
+                GraphEdgeShape(start: anchors.start, end: anchors.end)
+                  .trim(from: 0, to: knotSegmentProgress(segment))
+                  .stroke(
+                    store.branch(for: segment.branchNodeID).color.opacity(
+                      min(
+                        isIlluminated
+                          ? 1
+                          : knotSegmentFocusOpacity(segment)
+                            * (isEmphasized ? 1 : 0.35),
+                        1
+                      )
+                    ),
+                    style: StrokeStyle(
+                      lineWidth: GraphLineLODPolicy.canvasWidth(
+                        screenWidth: (isEmphasized ? normalWidth : normalWidth * 0.5)
+                          + (isIlluminated ? 0.7 : 0),
+                        cameraScale: effectiveScale
+                      ),
+                      lineCap: .round,
+                      lineJoin: .round
+                    )
+                  )
+                  .animation(.easeInOut(duration: 0.12), value: isIlluminated)
                   .accessibilityHidden(true)
               }
             }
@@ -784,6 +1095,24 @@ struct FamilyGraphView: View {
           .accessibilityIdentifier("connectionMap.edgeLayer")
           .accessibilityValue("最背面")
 
+          ZStack {
+            ForEach(store.coupleRenderModel.knots) { knot in
+              let knotCenter = knotPosition(knot, origin: origin)
+              CoupleKnotView(
+                color: store.branch(for: knot.second).color,
+                isFocused: focusedNodeID.map { knot.id.people.contains($0) } ?? false
+              )
+              // 結び目は人物より小さい9ptを画面上で維持する。
+              .scaleEffect(1 / max(effectiveScale, 0.0001))
+              .position(knotCenter)
+              .accessibilityElement(children: .ignore)
+              .accessibilityIdentifier("connectionMap.knot")
+              .accessibilityLabel("夫婦の結び目")
+            }
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .zIndex(GraphRenderLayer.knots.rawValue)
+
           // ノードは描画順でもzIndexでも接続線より前面に固定する。
           ZStack {
             ForEach(Array(store.nodes.values), id: \.id) { node in
@@ -791,6 +1120,10 @@ struct FamilyGraphView: View {
               let isFocused = node.id == focusedNodeID
               let distance = focusDistances[node.id]
               let focusPresentation = GraphFocusHierarchy.presentation(for: distance)
+              let lodPresentation = GraphNodeLODPolicy.presentation(
+                cameraScale: effectiveScale,
+                focusScale: focusPresentation.nodeScale
+              )
               let semanticVisibility = GraphSemanticZoomPolicy.visibility(
                 at: semanticZoomLevel,
                 isFocused: isFocused,
@@ -815,7 +1148,7 @@ struct FamilyGraphView: View {
               // 登場・バウンスは珠の中心を固定した局所アニメーションに限定する。
               .scaleEffect(
                 (visibleNodeIDs.contains(node.id) ? 1 : 0.3)
-                  * focusPresentation.nodeScale
+                  * lodPresentation.localScale
                   * (bouncingNodeID == node.id ? 1.08 : 1),
                 anchor: UnitPoint(x: 0.5, y: (beadDiameter / 2) / nodeCardHeight)
               )
@@ -925,7 +1258,10 @@ struct FamilyGraphView: View {
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(canvasIdentifier)
     .accessibilityValue(canvasAccessibilityValue)
-    .onDisappear { cancelIntroAnimation() }
+    .onDisappear {
+      cancelIntroAnimation()
+      pathIlluminationToken = UUID()
+    }
     .sheet(
       item: $nodeActionRequest,
       onDismiss: performPendingNodeAction
@@ -973,7 +1309,7 @@ struct FamilyGraphView: View {
   private var canvasAccessibilityValue: String {
     #if DEBUG
       if ProcessInfo.processInfo.arguments.contains("-ui-testing-family-graph-ux") {
-        return "\(introPhase)|scale:\(String(format: "%.2f", scale * pinchDelta))"
+        return "\(introPhase)|scale:\(String(format: "%.2f", scale * pinchDelta))|nodes:\(store.nodes.count)"
       }
     #endif
     return introPhase
@@ -991,15 +1327,20 @@ struct FamilyGraphView: View {
   private func edgeAnchors(
     from first: GraphNode,
     to second: GraphNode,
-    origin: CGPoint
+    origin: CGPoint,
+    cameraScale: CGFloat
   ) -> GraphEdgeAnchors {
     GraphCanvasGeometry.edgeAnchors(
       from: graphPosition(first, origin: origin),
       to: graphPosition(second, origin: origin),
-      startRadius: beadDiameter / 2
-        * GraphFocusHierarchy.presentation(for: focusDistances[first.id]).nodeScale,
-      endRadius: beadDiameter / 2
-        * GraphFocusHierarchy.presentation(for: focusDistances[second.id]).nodeScale
+      startRadius: GraphNodeLODPolicy.presentation(
+        cameraScale: cameraScale,
+        focusScale: GraphFocusHierarchy.presentation(for: focusDistances[first.id]).nodeScale
+      ).canvasRadius,
+      endRadius: GraphNodeLODPolicy.presentation(
+        cameraScale: cameraScale,
+        focusScale: GraphFocusHierarchy.presentation(for: focusDistances[second.id]).nodeScale
+      ).canvasRadius
     )
   }
 
@@ -1010,13 +1351,143 @@ struct FamilyGraphView: View {
     return GraphFocusHierarchy.presentation(for: closestDistance).edgeOpacity
   }
 
-  private func updateFocus(to person: Person) {
-    let id = PersistentModelIDBox(person.persistentModelID)
-    focusedNodeID = id
-    focusDistances = store.distances(from: id)
-    emphasizedPathEdges = GraphPathEmphasis.edgeEndpoints(
-      for: RelationLabeler.shortestRoute(from: selfPerson, to: person)
+  private func knotPosition(_ knot: GraphCoupleKnot, origin: CGPoint) -> CGPoint {
+    guard let first = store.nodes[knot.first], let second = store.nodes[knot.second] else {
+      return origin
+    }
+    let a = graphPosition(first, origin: origin)
+    let b = graphPosition(second, origin: origin)
+    return CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+  }
+
+  private func renderPosition(
+    _ endpoint: GraphRenderEndpoint,
+    origin: CGPoint
+  ) -> CGPoint? {
+    switch endpoint {
+    case .person(let id):
+      guard let node = store.nodes[id] else { return nil }
+      return graphPosition(node, origin: origin)
+    case .knot(let id):
+      guard let knot = store.coupleRenderModel.knots.first(where: { $0.id == id }) else {
+        return nil
+      }
+      return knotPosition(knot, origin: origin)
+    }
+  }
+
+  private func knotSegmentAnchors(
+    _ segment: GraphKnotSegment,
+    origin: CGPoint,
+    cameraScale: CGFloat
+  ) -> GraphEdgeAnchors? {
+    guard
+      let start = renderPosition(segment.from, origin: origin),
+      let end = renderPosition(segment.to, origin: origin)
+    else { return nil }
+    let startRadius = endpointRadius(segment.from, cameraScale: cameraScale)
+    let endRadius = endpointRadius(segment.to, cameraScale: cameraScale)
+    return GraphCanvasGeometry.edgeAnchors(
+      from: start,
+      to: end,
+      startRadius: startRadius,
+      endRadius: endRadius
     )
+  }
+
+  private func endpointRadius(
+    _ endpoint: GraphRenderEndpoint,
+    cameraScale: CGFloat
+  ) -> CGFloat {
+    switch endpoint {
+    case .person(let id):
+      return GraphNodeLODPolicy.presentation(
+        cameraScale: cameraScale,
+        focusScale: GraphFocusHierarchy.presentation(for: focusDistances[id]).nodeScale
+      ).canvasRadius
+    case .knot:
+      return CoupleKnotView.diameter / (2 * max(cameraScale, 0.0001))
+    }
+  }
+
+  private func knotSegmentProgress(_ segment: GraphKnotSegment) -> CGFloat {
+    guard !segment.sourceEdgeIDs.isEmpty else { return 1 }
+    return segment.sourceEdgeIDs.map { edgeProgress[$0] ?? 0 }.max() ?? 0
+  }
+
+  private func segmentIsEmphasized(_ segment: GraphKnotSegment) -> Bool {
+    guard let emphasizedPathEdges else { return true }
+    return !segment.sourceEdges.isDisjoint(with: emphasizedPathEdges)
+  }
+
+  private func segmentIsIlluminated(_ segment: GraphKnotSegment) -> Bool {
+    !segment.sourceEdges.isDisjoint(with: illuminatedPathEdges)
+  }
+
+  private func knotSegmentFocusOpacity(_ segment: GraphKnotSegment) -> Double {
+    let personIDs: [PersistentModelIDBox] = [segment.from, segment.to].flatMap {
+      switch $0 {
+      case .person(let id): [id]
+      case .knot(let couple): Array(couple.people)
+      }
+    }
+    let closestDistance = personIDs.compactMap { focusDistances[$0] }.min()
+    return GraphFocusHierarchy.presentation(for: closestDistance).edgeOpacity
+  }
+
+  private func updateFocus(to person: Person, animateTransition: Bool = false) {
+    let id = PersistentModelIDBox(person.persistentModelID)
+    let route = RelationLabeler.shortestRoute(from: selfPerson, to: person)
+    let distances = store.distances(from: id)
+    let emphasized = GraphPathEmphasis.edgeEndpoints(for: route)
+    let orderedPath = GraphPathEmphasis.orderedEdgeEndpoints(for: route)
+
+    guard animateTransition, focusedNodeID != id, let node = store.nodes[id] else {
+      focusedNodeID = id
+      focusDistances = distances
+      emphasizedPathEdges = emphasized
+      illuminatedPathEdges = []
+      return
+    }
+
+    let targetOffset = GraphFocusTransition.centeredOffset(
+      position: GraphGridPosition(level: node.level, slot: node.slot),
+      cameraScale: scale,
+      slotWidth: slotWidth,
+      levelHeight: levelHeight
+    )
+    pathIlluminationToken = UUID()
+    illuminatedPathEdges = []
+    withAnimation(.easeInOut(duration: reduceMotion ? 0 : GraphFocusTransition.duration)) {
+      focusedNodeID = id
+      focusDistances = distances
+      emphasizedPathEdges = emphasized
+      offset = targetOffset
+    }
+    illuminatePath(orderedPath)
+  }
+
+  private func illuminatePath(_ orderedPath: [GraphEdgeEndpoints]) {
+    // 直接の1本ではなく、複数の人物を辿る時だけ静かな順次点灯を行う。
+    guard orderedPath.count >= 2 else { return }
+    if reduceMotion {
+      illuminatedPathEdges = Set(orderedPath)
+      return
+    }
+
+    let token = UUID()
+    pathIlluminationToken = token
+    Task { @MainActor in
+      for edge in orderedPath {
+        try? await Task.sleep(
+          nanoseconds: GraphFocusTransition.illuminationIntervalNanoseconds
+        )
+        guard pathIlluminationToken == token else { return }
+        withAnimation(.easeInOut(duration: 0.12)) {
+          _ = illuminatedPathEdges.insert(edge)
+        }
+      }
+    }
   }
 
   private func nodeAccessibilityValue(
@@ -1040,7 +1511,7 @@ struct FamilyGraphView: View {
     store.expand(node.person)
     let addedNodeIDs = Set(store.nodes.keys).subtracting(previousNodeIDs)
     let addedEdgeIDs = Set(store.edges.map(\.id)).subtracting(previousEdgeIDs)
-    updateFocus(to: node.person)
+    updateFocus(to: node.person, animateTransition: true)
 
     _ = withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.2)) {
       expandedIDs.insert(node.id)
@@ -1105,6 +1576,8 @@ struct FamilyGraphView: View {
     expandedIDs = []
     visibleNodeIDs = []
     edgeProgress = [:]
+    illuminatedPathEdges = []
+    pathIlluminationToken = UUID()
     focusedNodeID = nil
     focusDistances = [:]
     bouncingNodeID = nil
@@ -1441,6 +1914,10 @@ private struct GraphNodeCard: View {
       * focusPresentation.nodeOpacity
   }
 
+  private var focusAdornment: GraphFocusAdornment {
+    GraphFocusAdornmentPolicy.adornment(isSelf: isSelf, isFocused: isFocused)
+  }
+
   var body: some View {
     VStack(spacing: 4) {
       ZStack {
@@ -1473,10 +1950,17 @@ private struct GraphNodeCard: View {
       .clipShape(Circle())
       .overlay(
         Circle().stroke(
-          branch.color,
-          lineWidth: isSelf ? 2.5 : (photoImage == nil ? 1 : 1.5)
+          isFocused ? (isSelf ? AppTheme.attention : AppTheme.ai) : branch.color,
+          lineWidth: isFocused ? 2.5 : (photoImage == nil ? 1 : 1.5)
         )
         .opacity(contentOpacity)
+      )
+      .shadow(
+        color: isFocused
+          ? (isSelf ? AppTheme.attention : AppTheme.ai).opacity(0.22)
+          : .clear,
+        radius: isFocused ? 7 : 0,
+        y: isFocused ? 2 : 0
       )
       // 未展開のノードには、まだ辿れることを示す小さな＋バッジ
       .overlay(alignment: .bottomTrailing) {
@@ -1512,17 +1996,56 @@ private struct GraphNodeCard: View {
           .opacity(contentOpacity)
       }
     }
+    .saturation(focusPresentation.saturation)
+    .contrast(focusPresentation.contrast)
     .background(alignment: .top) {
-      if isSelf {
-        EndpointNodeRings(color: AppTheme.attention)
+      if focusAdornment.showsStrongFocus {
+        EndpointNodeRings(color: isSelf ? AppTheme.attention : AppTheme.ai)
           .frame(width: 120, height: 120)
           .offset(y: -32)
-      } else if isFocused {
-        EndpointNodeRings(color: AppTheme.ai)
-          .frame(width: 120, height: 120)
-          .offset(y: -32)
+      } else if focusAdornment.showsSelfMarker {
+        SelfNodeMarker()
+          .frame(width: 72, height: 72)
+          .offset(y: -8)
       }
     }
+  }
+}
+
+/// 非フォーカス時の「自分」は小さな二重リングだけで識別する。
+private struct SelfNodeMarker: View {
+  var body: some View {
+    ZStack(alignment: .top) {
+      Circle()
+        .stroke(AppTheme.attention.opacity(0.28), lineWidth: 0.7)
+        .frame(width: 64, height: 64)
+      Circle()
+        .stroke(AppTheme.attention.opacity(0.16), lineWidth: 0.6)
+        .frame(width: 70, height: 70)
+      Circle()
+        .fill(AppTheme.attention.opacity(0.58))
+        .frame(width: 4, height: 4)
+        .offset(y: -1)
+    }
+    .accessibilityHidden(true)
+  }
+}
+
+/// 人物ではなく、夫婦の糸を束ねるrender専用の小さな結び目。
+private struct CoupleKnotView: View {
+  static let diameter: CGFloat = 9
+  let color: Color
+  let isFocused: Bool
+
+  var body: some View {
+    Circle()
+      .fill(AppTheme.paperRaised)
+      .frame(width: Self.diameter, height: Self.diameter)
+      .overlay {
+        Circle()
+          .stroke(color.opacity(isFocused ? 0.95 : 0.72), lineWidth: 1.2)
+      }
+      .shadow(color: color.opacity(isFocused ? 0.18 : 0), radius: 3)
   }
 }
 
