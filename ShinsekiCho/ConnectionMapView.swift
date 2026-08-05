@@ -619,10 +619,12 @@ enum QuickRelativeRegistration {
     } catch let error as RelationshipLinkError {
       RelationshipManager.detachAll(newPerson)
       context.delete(newPerson)
+      context.rollback()
       throw error
     } catch {
       RelationshipManager.detachAll(newPerson)
       context.delete(newPerson)
+      context.rollback()
       throw QuickRelativeRegistrationError.saveFailed
     }
     return newPerson
@@ -645,49 +647,19 @@ enum QuickRelativeRegistration {
     in context: ModelContext,
     includeSpouseForChild: Bool = false
   ) throws {
-    let spouseWasAlreadyParent = person.spouse?.children.contains {
-      $0.persistentModelID == relative.persistentModelID
-    } ?? false
-    try RelationshipManager.link(
-      kind,
-      person: person,
-      relative: relative,
-      includeSpouseForChild: includeSpouseForChild
-    )
     do {
-      try context.save()
-    } catch {
-      rollback(
-        relative,
-        kind: kind,
-        for: person,
-        includeSpouseForChild: includeSpouseForChild,
-        spouseWasAlreadyParent: spouseWasAlreadyParent
-      )
-      throw QuickRelativeRegistrationError.saveFailed
-    }
-  }
-
-  private static func rollback(
-    _ relative: Person,
-    kind: QuickRelationKind,
-    for person: Person,
-    includeSpouseForChild: Bool,
-    spouseWasAlreadyParent: Bool
-  ) {
-    switch kind {
-    case .spouse:
-      RelationshipManager.removeSpouse(of: person)
-    case .parent:
-      RelationshipManager.removeParentChild(parent: relative, child: person)
-    case .child:
-      RelationshipManager.removeParentChild(parent: person, child: relative)
-      if includeSpouseForChild,
-        !spouseWasAlreadyParent,
-        let spouse = person.spouse
-      {
-        RelationshipManager.removeParentChild(parent: spouse, child: relative)
+      try RelationshipTransaction.perform(in: context) {
+        try RelationshipManager.link(
+          kind,
+          person: person,
+          relative: relative,
+          includeSpouseForChild: includeSpouseForChild
+        )
       }
+    } catch let error as RelationshipLinkError {
+      throw error
+    } catch {
+      throw QuickRelativeRegistrationError.saveFailed
     }
   }
 }
@@ -1987,12 +1959,13 @@ private struct QuickRelativeAddSheet: View {
       ) { prompt in
         SharedChildrenLinkSheet(prompt: prompt) { selectedChildren in
           do {
-            _ = RelationshipManager.linkSharedChildren(
-              selectedChildren,
-              of: prompt.person,
-              with: prompt.spouse
-            )
-            try modelContext.save()
+            try RelationshipTransaction.perform(in: modelContext) {
+              RelationshipManager.linkSharedChildren(
+                selectedChildren,
+                of: prompt.person,
+                with: prompt.spouse
+              )
+            }
             errorMessage = nil
           } catch {
             dismissAfterSharedChildPrompt = false

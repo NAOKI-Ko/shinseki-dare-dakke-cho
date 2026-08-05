@@ -460,8 +460,7 @@ struct RelationEditorView: View {
     ) {
         if trialManager.canEdit {
             do {
-                try action()
-                try context.save()
+                try RelationshipTransaction.perform(in: context, action)
                 errorMessage = nil
                 onSuccess()
             } catch {

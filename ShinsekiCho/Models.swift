@@ -136,6 +136,8 @@ enum RelationshipLinkError: LocalizedError, Equatable {
     case spouseUnavailable
     case parentLimit
     case alreadyLinked
+    case invalidFamilyCycle
+    case incompatibleRelationship
 
     var errorDescription: String? {
         switch self {
@@ -147,6 +149,49 @@ enum RelationshipLinkError: LocalizedError, Equatable {
             "親は2人まで登録できます。"
         case .alreadyLinked:
             "この関係はすでに登録されています。"
+        case .invalidFamilyCycle:
+            "祖先と子孫が循環する親子関係は登録できません。"
+        case .incompatibleRelationship:
+            "祖先・子孫・親子・配偶者が重複する関係は登録できません。"
+        }
+    }
+}
+
+/// 関係変更と保存を一単位にし、途中の例外や保存失敗時に未保存変更を残さない。
+enum RelationshipTransaction {
+    @discardableResult
+    static func perform<Value>(
+        in context: ModelContext,
+        _ mutation: () throws -> Value
+    ) throws -> Value {
+        let previousUndoManager = context.undoManager
+        let undoManager = UndoManager()
+        context.undoManager = undoManager
+        undoManager.beginUndoGrouping()
+        var undoGroupIsOpen = true
+
+        do {
+            let value = try mutation()
+            context.processPendingChanges()
+            undoManager.endUndoGrouping()
+            undoGroupIsOpen = false
+            try context.save()
+            undoManager.removeAllActions()
+            context.undoManager = previousUndoManager
+            return value
+        } catch {
+            if undoGroupIsOpen {
+                context.processPendingChanges()
+                undoManager.endUndoGrouping()
+            }
+            if undoManager.canUndo {
+                undoManager.undo()
+                context.processPendingChanges()
+            }
+            context.rollback()
+            undoManager.removeAllActions()
+            context.undoManager = previousUndoManager
+            throw error
         }
     }
 }
@@ -156,16 +201,65 @@ enum RelationshipManager {
         a.persistentModelID == b.persistentModelID
     }
 
+    /// ancestorからchildrenを辿ってpersonへ到達できるか。壊れた既存データでも停止する。
+    static func isAncestor(_ ancestor: Person, of person: Person) -> Bool {
+        guard !isSamePerson(ancestor, person) else { return false }
+        let targetID = person.persistentModelID
+        var visited = Set<PersistentIdentifier>()
+        var pending = Array(ancestor.children)
+
+        while let candidate = pending.popLast() {
+            let candidateID = candidate.persistentModelID
+            guard visited.insert(candidateID).inserted else { continue }
+            if candidateID == targetID { return true }
+            pending.append(contentsOf: candidate.children)
+        }
+        return false
+    }
+
+    static func isDescendant(_ descendant: Person, of person: Person) -> Bool {
+        isAncestor(person, of: descendant)
+    }
+
+    /// parent -> childを追加した結果、childからparentへ戻る閉路ができるか。
+    static func wouldCreateAncestryCycle(parent: Person, child: Person) -> Bool {
+        isSamePerson(parent, child) || isAncestor(child, of: parent)
+    }
+
+    private static func hasLinealRelationship(_ a: Person, _ b: Person) -> Bool {
+        isAncestor(a, of: b) || isAncestor(b, of: a)
+    }
+
+    private static func hasSpouseRelationship(_ a: Person, _ b: Person) -> Bool {
+        a.spouse?.persistentModelID == b.persistentModelID
+            || b.spouse?.persistentModelID == a.persistentModelID
+    }
+
+    /// 複数の親を同時追加する操作でも、2人上限と循環禁止を追加前に検証する。
+    private static func canAddParents(_ parents: [Person], to child: Person) -> Bool {
+        var resultingParentIDs = Set(child.parents.map(\.persistentModelID))
+        for parent in parents {
+            guard !hasSpouseRelationship(parent, child),
+                  !wouldCreateAncestryCycle(parent: parent, child: child)
+            else {
+                return false
+            }
+            resultingParentIDs.insert(parent.persistentModelID)
+        }
+        return resultingParentIDs.count <= 2
+    }
+
     /// 新しい配偶者関係を作れるか。既存配偶者の暗黙置換は行わない。
     static func canSetSpouse(_ a: Person, _ b: Person) -> Bool {
         guard !isSamePerson(a, b) else { return false }
-        return a.spouse == nil && b.spouse == nil
+        guard a.spouse == nil, b.spouse == nil else { return false }
+        return !hasLinealRelationship(a, b)
     }
 
     /// 配偶者として双方向に結びつける。既存配偶者がいる場合は変更しない。
     @discardableResult
     static func setSpouse(_ a: Person, _ b: Person) -> Bool {
-        guard !isSamePerson(a, b) else { return false }
+        guard !isSamePerson(a, b), !hasLinealRelationship(a, b) else { return false }
         let alreadyLinked = a.spouse?.persistentModelID == b.persistentModelID
             && b.spouse?.persistentModelID == a.persistentModelID
         if alreadyLinked { return false }
@@ -189,10 +283,13 @@ enum RelationshipManager {
     /// 親子関係を安全に追加できるか。親は最大2人、自己関係は禁止。
     static func canAddParentChild(parent: Person, child: Person) -> Bool {
         guard !isSamePerson(parent, child) else { return false }
+        guard !hasSpouseRelationship(parent, child) else { return false }
         let alreadyParent = child.parents.contains {
             $0.persistentModelID == parent.persistentModelID
         }
-        return alreadyParent || child.parents.count < 2
+        if alreadyParent { return true }
+        return child.parents.count < 2
+            && !wouldCreateAncestryCycle(parent: parent, child: child)
     }
 
     /// 親子関係を追加する(parentの子・childの親の両方向を同期)。
@@ -221,6 +318,9 @@ enum RelationshipManager {
         to person: Person,
         includeSpouse: Bool
     ) -> Bool {
+        var parents = [person]
+        if includeSpouse, let spouse = person.spouse { parents.append(spouse) }
+        guard canAddParents(parents, to: child) else { return false }
         let linkedToPerson = addParentChild(parent: person, child: child)
         guard linkedToPerson || person.children.contains(where: {
             $0.persistentModelID == child.persistentModelID
@@ -265,13 +365,34 @@ enum RelationshipManager {
         }
         guard canLink(kind, person: person, relative: relative) else {
             switch kind {
+            case .spouse where hasLinealRelationship(person, relative):
+                throw RelationshipLinkError.incompatibleRelationship
             case .spouse:
                 throw RelationshipLinkError.spouseUnavailable
+            case .parent where wouldCreateAncestryCycle(parent: relative, child: person):
+                throw RelationshipLinkError.invalidFamilyCycle
+            case .parent where hasSpouseRelationship(person, relative):
+                throw RelationshipLinkError.incompatibleRelationship
             case .parent where person.parents.count >= 2:
                 throw RelationshipLinkError.parentLimit
+            case .child where wouldCreateAncestryCycle(parent: person, child: relative):
+                throw RelationshipLinkError.invalidFamilyCycle
+            case .child where hasSpouseRelationship(person, relative):
+                throw RelationshipLinkError.incompatibleRelationship
             default:
                 throw RelationshipLinkError.alreadyLinked
             }
+        }
+
+        if kind == .child,
+           includeSpouseForChild,
+           let spouse = person.spouse,
+           !canAddParents([person, spouse], to: relative) {
+            if wouldCreateAncestryCycle(parent: person, child: relative)
+                || wouldCreateAncestryCycle(parent: spouse, child: relative) {
+                throw RelationshipLinkError.invalidFamilyCycle
+            }
+            throw RelationshipLinkError.parentLimit
         }
 
         switch kind {
