@@ -206,7 +206,9 @@ struct GraphGridPosition {
   let slot: Int
 }
 
-struct GraphViewportTransform {
+struct GraphViewportTransform: Equatable {
+  static let interactiveScaleRange: ClosedRange<CGFloat> = 0.4...2.5
+
   let scale: CGFloat
   let offset: CGSize
 
@@ -224,6 +226,33 @@ struct GraphViewportTransform {
     return CGPoint(
       x: origin.x + (point.x - origin.x - offset.width) / scale,
       y: origin.y + (point.y - origin.y - offset.height) / scale
+    )
+  }
+
+  /// gesture開始時のcameraを基準に、画面上のanchorを動かさず拡大縮小する。
+  func zoomed(
+    by magnification: CGFloat,
+    anchor: CGPoint,
+    around origin: CGPoint,
+    scaleRange: ClosedRange<CGFloat> = interactiveScaleRange
+  ) -> GraphViewportTransform {
+    let proposedScale = scale * magnification
+    let nextScale = min(max(proposedScale, scaleRange.lowerBound), scaleRange.upperBound)
+    let graphAnchor = removing(from: anchor, around: origin)
+    let nextOffset = CGSize(
+      width: anchor.x - origin.x - (graphAnchor.x - origin.x) * nextScale,
+      height: anchor.y - origin.y - (graphAnchor.y - origin.y) * nextScale
+    )
+    return GraphViewportTransform(scale: nextScale, offset: nextOffset)
+  }
+
+  func panned(by translation: CGSize) -> GraphViewportTransform {
+    GraphViewportTransform(
+      scale: scale,
+      offset: CGSize(
+        width: offset.width + translation.width,
+        height: offset.height + translation.height
+      )
     )
   }
 }
@@ -461,6 +490,16 @@ enum GraphCanvasGeometry {
   }
 }
 
+enum GraphHitTestGeometry {
+  static func graphLocation(
+    for screenLocation: CGPoint,
+    origin: CGPoint,
+    viewport: GraphViewportTransform
+  ) -> CGPoint {
+    viewport.removing(from: screenLocation, around: origin)
+  }
+}
+
 /// 導入時の全体俯瞰と、完了時のフォーカス位置を軽量な算術だけで求める。
 enum GraphIntroLayout {
   static func overview(
@@ -526,6 +565,26 @@ enum GraphFocusTransition {
     CGSize(
       width: -CGFloat(position.slot) * slotWidth * cameraScale,
       height: -CGFloat(position.level) * levelHeight * cameraScale
+    )
+  }
+
+  /// visual focusだけならcameraを保持し、明示的なfocus時だけ対象を中央へ移す。
+  static func viewport(
+    from current: GraphViewportTransform,
+    centeredOn position: GraphGridPosition,
+    slotWidth: CGFloat,
+    levelHeight: CGFloat,
+    moveCamera: Bool
+  ) -> GraphViewportTransform {
+    guard moveCamera else { return current }
+    return GraphViewportTransform(
+      scale: current.scale,
+      offset: centeredOffset(
+        position: position,
+        cameraScale: current.scale,
+        slotWidth: slotWidth,
+        levelHeight: levelHeight
+      )
     )
   }
 }
@@ -1015,10 +1074,8 @@ struct FamilyGraphView: View {
   @State private var introAnimationToken = UUID()
   @State private var introPhase = "完了"
 
-  @State private var scale: CGFloat = 1.0
-  @GestureState private var pinchDelta: CGFloat = 1.0
-  @State private var offset: CGSize = .zero
-  @GestureState private var dragDelta: CGSize = .zero
+  @State private var viewportTransform = GraphViewportTransform(scale: 1, offset: .zero)
+  @State private var gestureStartTransform: GraphViewportTransform?
 
   private let levelHeight: CGFloat = 120
   private let slotWidth: CGFloat = 108
@@ -1030,15 +1087,7 @@ struct FamilyGraphView: View {
     GeometryReader { geo in
       // 親・本人・子の3世代すべてに、画面端と重ならないタップ余白を確保する。
       let origin = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
-      let effectiveScale = scale * pinchDelta
-      let liveOffset = CGSize(
-        width: offset.width + dragDelta.width,
-        height: offset.height + dragDelta.height
-      )
-      let viewportTransform = GraphViewportTransform(
-        scale: effectiveScale,
-        offset: liveOffset
-      )
+      let effectiveScale = viewportTransform.scale
       let semanticZoomLevel = GraphSemanticZoomPolicy.level(for: effectiveScale)
 
       ZStack {
@@ -1058,6 +1107,7 @@ struct FamilyGraphView: View {
                   from: a,
                   to: b,
                   origin: origin,
+                  transform: viewportTransform,
                   cameraScale: effectiveScale
                 )
                 let isEmphasized = emphasizedPathEdges?.contains(edge.endpoints) ?? true
@@ -1074,11 +1124,8 @@ struct FamilyGraphView: View {
                       )
                     ),
                     style: StrokeStyle(
-                      lineWidth: GraphLineLODPolicy.canvasWidth(
-                        screenWidth: (isEmphasized ? normalWidth : normalWidth * 0.5)
-                          + (isIlluminated ? 0.7 : 0),
-                        cameraScale: effectiveScale
-                      ),
+                      lineWidth: (isEmphasized ? normalWidth : normalWidth * 0.5)
+                        + (isIlluminated ? 0.7 : 0),
                       lineCap: .round,
                       lineJoin: .round
                     )
@@ -1092,6 +1139,7 @@ struct FamilyGraphView: View {
               if let anchors = knotSegmentAnchors(
                 segment,
                 origin: origin,
+                transform: viewportTransform,
                 cameraScale: effectiveScale
               ) {
                 let isEmphasized = segmentIsEmphasized(segment)
@@ -1110,11 +1158,8 @@ struct FamilyGraphView: View {
                       )
                     ),
                     style: StrokeStyle(
-                      lineWidth: GraphLineLODPolicy.canvasWidth(
-                        screenWidth: (isEmphasized ? normalWidth : normalWidth * 0.5)
-                          + (isIlluminated ? 0.7 : 0),
-                        cameraScale: effectiveScale
-                      ),
+                      lineWidth: (isEmphasized ? normalWidth : normalWidth * 0.5)
+                        + (isIlluminated ? 0.7 : 0),
                       lineCap: .round,
                       lineJoin: .round
                     )
@@ -1132,13 +1177,14 @@ struct FamilyGraphView: View {
 
           ZStack {
             ForEach(store.coupleRenderModel.knots) { knot in
-              let knotCenter = knotPosition(knot, origin: origin)
+              let knotCenter = viewportTransform.applying(
+                to: knotPosition(knot, origin: origin),
+                around: origin
+              )
               CoupleKnotView(
                 color: store.branch(for: knot.second).color,
                 isFocused: focusedNodeID.map { knot.id.people.contains($0) } ?? false
               )
-              // 結び目は人物より小さい9ptを画面上で維持する。
-              .scaleEffect(1 / max(effectiveScale, 0.0001))
               .position(knotCenter)
               .accessibilityElement(children: .ignore)
               .accessibilityIdentifier("connectionMap.knot")
@@ -1151,7 +1197,10 @@ struct FamilyGraphView: View {
           // ノードは描画順でもzIndexでも接続線より前面に固定する。
           ZStack {
             ForEach(Array(store.nodes.values), id: \.id) { node in
-              let beadCenter = graphPosition(node, origin: origin)
+              let beadCenter = viewportTransform.applying(
+                to: graphPosition(node, origin: origin),
+                around: origin
+              )
               let isFocused = node.id == focusedNodeID
               let distance = focusDistances[node.id]
               let focusPresentation = GraphFocusHierarchy.presentation(for: distance)
@@ -1183,7 +1232,7 @@ struct FamilyGraphView: View {
               // 登場・バウンスは珠の中心を固定した局所アニメーションに限定する。
               .scaleEffect(
                 (visibleNodeIDs.contains(node.id) ? 1 : 0.3)
-                  * lodPresentation.localScale
+                  * (lodPresentation.screenDiameter / beadDiameter)
                   * (bouncingNodeID == node.id ? 1.08 : 1),
                 anchor: UnitPoint(x: 0.5, y: (beadDiameter / 2) / nodeCardHeight)
               )
@@ -1217,46 +1266,9 @@ struct FamilyGraphView: View {
           .accessibilityValue("最前面")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .scaleEffect(viewportTransform.scale, anchor: .center)
-        .offset(viewportTransform.offset)
       }
-      // 子のノードButtonと同時に認識させ、単純なタップを奪わない。
-      .simultaneousGesture(
-        MagnificationGesture()
-          .updating($pinchDelta) { value, state, _ in state = value }
-          .onEnded { value in
-            cancelIntroAnimation()
-            let proposedScale = scale * value
-            scale = min(max(proposedScale, 0.4), 2.5)
-          }
-      )
-      .simultaneousGesture(
-        DragGesture(minimumDistance: 0)
-          .updating($dragDelta) { value, state, _ in
-            if hypot(value.translation.width, value.translation.height) >= 10 {
-              state = value.translation
-            }
-          }
-          .onEnded { value in
-            cancelIntroAnimation()
-            if suppressTapAfterLongPress {
-              suppressTapAfterLongPress = false
-              return
-            }
-            if hypot(value.translation.width, value.translation.height) < 10 {
-              if let node = node(
-                at: value.location,
-                origin: origin,
-                transform: viewportTransform
-              ) {
-                expand(node)
-              }
-            } else {
-              offset.width += value.translation.width
-              offset.height += value.translation.height
-            }
-          }
-      )
+      // ピンチとパンを同じ開始cameraから合成し、途中の状態を二重加算しない。
+      .simultaneousGesture(viewportGesture(origin: origin))
       .clipped()
       // パン・ズームするグラフの外側に固定し、四辺で紙色へ自然に溶かす。
       .overlay {
@@ -1328,14 +1340,57 @@ struct FamilyGraphView: View {
 
   private func resetViewport() {
     cancelIntroAnimation()
-    scale = 1.0
-    offset = .zero
+    gestureStartTransform = nil
+    viewportTransform = GraphViewportTransform(scale: 1, offset: .zero)
+  }
+
+  private func viewportGesture(origin: CGPoint) -> some Gesture {
+    MagnifyGesture(minimumScaleDelta: 0.005)
+      .simultaneously(with: DragGesture(minimumDistance: 0))
+      .onChanged { value in
+        cancelIntroAnimation()
+        if gestureStartTransform == nil {
+          gestureStartTransform = viewportTransform
+        }
+        guard let start = gestureStartTransform else { return }
+        let magnification = value.first?.magnification ?? 1
+        let anchor = value.first?.startLocation ?? origin
+        let translation = value.second?.translation ?? .zero
+        viewportTransform = start
+          .zoomed(by: magnification, anchor: anchor, around: origin)
+          .panned(by: translation)
+      }
+      .onEnded { value in
+        let start = gestureStartTransform ?? viewportTransform
+        let magnification = value.first?.magnification ?? 1
+        let anchor = value.first?.startLocation ?? origin
+        let translation = value.second?.translation ?? .zero
+        let finalTransform = start
+          .zoomed(by: magnification, anchor: anchor, around: origin)
+          .panned(by: translation)
+        viewportTransform = finalTransform
+        gestureStartTransform = nil
+
+        if suppressTapAfterLongPress {
+          suppressTapAfterLongPress = false
+          return
+        }
+        guard value.first == nil, let drag = value.second else { return }
+        if hypot(drag.translation.width, drag.translation.height) < 10,
+           let tappedNode = node(
+             at: drag.location,
+             origin: origin,
+             transform: finalTransform
+           ) {
+          expand(tappedNode)
+        }
+      }
   }
 
   private var canvasAccessibilityValue: String {
     #if DEBUG
       if ProcessInfo.processInfo.arguments.contains("-ui-testing-family-graph-ux") {
-        return "\(introPhase)|scale:\(String(format: "%.2f", scale * pinchDelta))|nodes:\(store.nodes.count)"
+        return "\(introPhase)|scale:\(String(format: "%.2f", viewportTransform.scale))|offset:\(String(format: "%.1f", viewportTransform.offset.width)),\(String(format: "%.1f", viewportTransform.offset.height))|nodes:\(store.nodes.count)"
       }
     #endif
     return introPhase
@@ -1354,19 +1409,28 @@ struct FamilyGraphView: View {
     from first: GraphNode,
     to second: GraphNode,
     origin: CGPoint,
+    transform: GraphViewportTransform,
     cameraScale: CGFloat
   ) -> GraphEdgeAnchors {
-    GraphCanvasGeometry.edgeAnchors(
-      from: graphPosition(first, origin: origin),
+    let firstCenter = transform.applying(
+      to: graphPosition(first, origin: origin),
+      around: origin
+    )
+    let secondCenter = transform.applying(
       to: graphPosition(second, origin: origin),
+      around: origin
+    )
+    return GraphCanvasGeometry.edgeAnchors(
+      from: firstCenter,
+      to: secondCenter,
       startRadius: GraphNodeLODPolicy.presentation(
         cameraScale: cameraScale,
         focusScale: GraphFocusHierarchy.presentation(for: focusDistances[first.id]).nodeScale
-      ).canvasRadius,
+      ).screenDiameter / 2,
       endRadius: GraphNodeLODPolicy.presentation(
         cameraScale: cameraScale,
         focusScale: GraphFocusHierarchy.presentation(for: focusDistances[second.id]).nodeScale
-      ).canvasRadius
+      ).screenDiameter / 2
     )
   }
 
@@ -1405,23 +1469,26 @@ struct FamilyGraphView: View {
   private func knotSegmentAnchors(
     _ segment: GraphKnotSegment,
     origin: CGPoint,
+    transform: GraphViewportTransform,
     cameraScale: CGFloat
   ) -> GraphEdgeAnchors? {
     guard
       let start = renderPosition(segment.from, origin: origin),
       let end = renderPosition(segment.to, origin: origin)
     else { return nil }
-    let startRadius = endpointRadius(segment.from, cameraScale: cameraScale)
-    let endRadius = endpointRadius(segment.to, cameraScale: cameraScale)
+    let transformedStart = transform.applying(to: start, around: origin)
+    let transformedEnd = transform.applying(to: end, around: origin)
+    let startRadius = endpointScreenRadius(segment.from, cameraScale: cameraScale)
+    let endRadius = endpointScreenRadius(segment.to, cameraScale: cameraScale)
     return GraphCanvasGeometry.edgeAnchors(
-      from: start,
-      to: end,
+      from: transformedStart,
+      to: transformedEnd,
       startRadius: startRadius,
       endRadius: endRadius
     )
   }
 
-  private func endpointRadius(
+  private func endpointScreenRadius(
     _ endpoint: GraphRenderEndpoint,
     cameraScale: CGFloat
   ) -> CGFloat {
@@ -1430,9 +1497,9 @@ struct FamilyGraphView: View {
       return GraphNodeLODPolicy.presentation(
         cameraScale: cameraScale,
         focusScale: GraphFocusHierarchy.presentation(for: focusDistances[id]).nodeScale
-      ).canvasRadius
+      ).screenDiameter / 2
     case .knot:
-      return CoupleKnotView.diameter / (2 * max(cameraScale, 0.0001))
+      return CoupleKnotView.diameter / 2
     }
   }
 
@@ -1461,34 +1528,45 @@ struct FamilyGraphView: View {
     return GraphFocusHierarchy.presentation(for: closestDistance).edgeOpacity
   }
 
-  private func updateFocus(to person: Person, animateTransition: Bool = false) {
+  private func updateFocus(
+    to person: Person,
+    moveCamera: Bool = false,
+    animateTransition: Bool = false
+  ) {
     let id = PersistentModelIDBox(person.persistentModelID)
     let route = RelationLabeler.shortestRoute(from: selfPerson, to: person)
     let distances = store.distances(from: id)
     let emphasized = GraphPathEmphasis.edgeEndpoints(for: route)
     let orderedPath = GraphPathEmphasis.orderedEdgeEndpoints(for: route)
+    let nextViewport: GraphViewportTransform
+    if let node = store.nodes[id] {
+      nextViewport = GraphFocusTransition.viewport(
+        from: viewportTransform,
+        centeredOn: GraphGridPosition(level: node.level, slot: node.slot),
+        slotWidth: slotWidth,
+        levelHeight: levelHeight,
+        moveCamera: moveCamera
+      )
+    } else {
+      nextViewport = viewportTransform
+    }
 
-    guard animateTransition, focusedNodeID != id, let node = store.nodes[id] else {
+    guard animateTransition, focusedNodeID != id else {
       focusedNodeID = id
       focusDistances = distances
       emphasizedPathEdges = emphasized
       illuminatedPathEdges = []
+      viewportTransform = nextViewport
       return
     }
 
-    let targetOffset = GraphFocusTransition.centeredOffset(
-      position: GraphGridPosition(level: node.level, slot: node.slot),
-      cameraScale: scale,
-      slotWidth: slotWidth,
-      levelHeight: levelHeight
-    )
     pathIlluminationToken = UUID()
     illuminatedPathEdges = []
     withAnimation(.easeInOut(duration: reduceMotion ? 0 : GraphFocusTransition.duration)) {
       focusedNodeID = id
       focusDistances = distances
       emphasizedPathEdges = emphasized
-      offset = targetOffset
+      viewportTransform = nextViewport
     }
     illuminatePath(orderedPath)
   }
@@ -1537,7 +1615,7 @@ struct FamilyGraphView: View {
     store.expand(node.person)
     let addedNodeIDs = Set(store.nodes.keys).subtracting(previousNodeIDs)
     let addedEdgeIDs = Set(store.edges.map(\.id)).subtracting(previousEdgeIDs)
-    updateFocus(to: node.person, animateTransition: true)
+    updateFocus(to: node.person, moveCamera: false, animateTransition: true)
 
     _ = withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.2)) {
       expandedIDs.insert(node.id)
@@ -1624,13 +1702,21 @@ struct FamilyGraphView: View {
         slotWidth: slotWidth,
         levelHeight: levelHeight
       )
-      scale = overview.scale
-      offset = overview.offset
+      viewportTransform = overview
       introPhase = "全体表示"
       animateIntroToFocusedPerson(token: animationToken)
     } else {
-      scale = 1
-      offset = .zero
+      let displayedID = PersistentModelIDBox(displayedPerson.persistentModelID)
+      let target = store.nodes[displayedID] ?? store.nodes[selfID]
+      if let target {
+        viewportTransform = GraphIntroLayout.focus(
+          position: GraphGridPosition(level: target.level, slot: target.slot),
+          slotWidth: slotWidth,
+          levelHeight: levelHeight
+        )
+      } else {
+        viewportTransform = GraphViewportTransform(scale: 1, offset: .zero)
+      }
       introPhase = "完了"
     }
 
@@ -1655,8 +1741,7 @@ struct FamilyGraphView: View {
       )
       introPhase = "ズーム中"
       withAnimation(.easeInOut(duration: 0.6)) {
-        scale = focused.scale
-        offset = focused.offset
+        viewportTransform = focused
       }
 
       try? await Task.sleep(nanoseconds: 600_000_000)
@@ -1711,7 +1796,11 @@ struct FamilyGraphView: View {
     origin: CGPoint,
     transform: GraphViewportTransform
   ) -> GraphNode? {
-    let graphLocation = transform.removing(from: location, around: origin)
+    let graphLocation = GraphHitTestGeometry.graphLocation(
+      for: location,
+      origin: origin,
+      viewport: transform
+    )
     let hitRadius = max(44 / max(transform.scale, 0.01), beadDiameter / 2)
     return store.nodes.values
       .map { node in

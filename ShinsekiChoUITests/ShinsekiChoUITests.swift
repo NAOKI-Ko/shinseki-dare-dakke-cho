@@ -660,6 +660,27 @@ final class ShinsekiChoUITests: XCTestCase {
       XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 3), .completed)
     }
 
+    func cameraState() -> String {
+      guard let value = canvas.value as? String else { return "" }
+      return value.components(separatedBy: "|")
+        .filter { $0.hasPrefix("scale:") || $0.hasPrefix("offset:") }
+        .joined(separator: "|")
+    }
+
+    func waitForScaleChange(from previous: Double, minimumDifference: Double = 0.05) {
+      let predicate = NSPredicate { object, _ in
+        guard
+          let element = object as? XCUIElement,
+          let value = element.value as? String,
+          let scaleText = value.components(separatedBy: "scale:").last,
+          let observedScale = Double(scaleText.components(separatedBy: "|").first ?? "")
+        else { return false }
+        return abs(observedScale - previous) >= minimumDifference
+      }
+      let expectation = XCTNSPredicateExpectation(predicate: predicate, object: canvas)
+      XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 3), .completed)
+    }
+
     waitForScale(1)
     canvas.pinch(withScale: 0.4, velocity: -1)
     waitForScale(0.4)
@@ -681,11 +702,37 @@ final class ShinsekiChoUITests: XCTestCase {
 
     app.buttons["connectionMap.resetButton"].tap()
     waitForScale(1)
+    let resetCamera = cameraState()
+    canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+      .press(
+        forDuration: 0.05,
+        thenDragTo: canvas.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.65, dy: 0.48)
+        )
+      )
+    XCTAssertNotEqual(cameraState(), resetCamera)
+    canvas.pinch(withScale: 1.4, velocity: 1)
+    waitForScaleChange(from: 1)
+    let cameraAfterPanAndZoom = cameraState()
+    canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.55))
+      .press(
+        forDuration: 0.05,
+        thenDragTo: canvas.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.42, dy: 0.6)
+        )
+      )
+    XCTAssertNotEqual(cameraState(), cameraAfterPanAndZoom)
+    keepScreenshot(app, name: "FamilyGraphPhase2_pan_zoom_pan")
+
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale(1)
     let father = element("connectionMap.node.山田 一郎", in: app)
     XCTAssertTrue(father.waitForExistence(timeout: 5))
     XCTAssertTrue((father.value as? String)?.contains("未展開") == true)
+    let cameraBeforeExpansion = cameraState()
     father.tap()
     XCTAssertTrue((father.value as? String)?.contains("focus:focused") == true)
+    XCTAssertEqual(cameraState(), cameraBeforeExpansion)
     keepScreenshot(app, name: "FamilyGraphUX_05_focused_person")
 
     father.press(forDuration: 1.2)
@@ -694,6 +741,9 @@ final class ShinsekiChoUITests: XCTestCase {
     keepScreenshot(app, name: "FamilyGraphUX_07_long_press_action_sheet")
 
     app.buttons["connectionMap.menu.child"].tap()
+    let newPersonMode = app.buttons["新しい人物"]
+    XCTAssertTrue(newPersonMode.waitForExistence(timeout: 3))
+    newPersonMode.tap()
     let nameField = element("quickRelative.name", in: app)
     XCTAssertTrue(nameField.waitForExistence(timeout: 3))
     nameField.typeText("共同の子 UX")

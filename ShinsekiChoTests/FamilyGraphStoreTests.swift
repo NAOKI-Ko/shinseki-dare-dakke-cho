@@ -510,6 +510,173 @@ final class FamilyGraphStoreTests: XCTestCase {
     }
   }
 
+  func testViewportZoomPreservesGestureAnchor() {
+    let origin = CGPoint(x: 200, y: 300)
+    let anchor = CGPoint(x: 84, y: 142)
+    let start = GraphViewportTransform(
+      scale: 1.1,
+      offset: CGSize(width: 27, height: -13)
+    )
+    let graphAnchor = start.removing(from: anchor, around: origin)
+    let zoomed = start.zoomed(by: 1.7, anchor: anchor, around: origin)
+    let restoredScreenAnchor = zoomed.applying(to: graphAnchor, around: origin)
+
+    XCTAssertEqual(restoredScreenAnchor.x, anchor.x, accuracy: 0.0001)
+    XCTAssertEqual(restoredScreenAnchor.y, anchor.y, accuracy: 0.0001)
+  }
+
+  func testViewportCenterAnchorZoomRemainsCentered() {
+    let origin = CGPoint(x: 180, y: 260)
+    let start = GraphViewportTransform(
+      scale: 0.8,
+      offset: CGSize(width: 45, height: -31)
+    )
+    let graphPointUnderCenter = start.removing(from: origin, around: origin)
+    let zoomed = start.zoomed(by: 2, anchor: origin, around: origin)
+    let screenPoint = zoomed.applying(to: graphPointUnderCenter, around: origin)
+
+    XCTAssertEqual(screenPoint.x, origin.x, accuracy: 0.0001)
+    XCTAssertEqual(screenPoint.y, origin.y, accuracy: 0.0001)
+  }
+
+  func testViewportOffCenterAnchorZoomDoesNotDrift() {
+    let origin = CGPoint(x: 210, y: 330)
+    let anchor = CGPoint(x: 326, y: 92)
+    let start = GraphViewportTransform(
+      scale: 0.65,
+      offset: CGSize(width: -24, height: 38)
+    )
+    let anchoredGraphPoint = start.removing(from: anchor, around: origin)
+    let zoomed = start.zoomed(by: 1.45, anchor: anchor, around: origin)
+
+    XCTAssertEqual(
+      zoomed.applying(to: anchoredGraphPoint, around: origin).x,
+      anchor.x,
+      accuracy: 0.0001
+    )
+    XCTAssertEqual(
+      zoomed.applying(to: anchoredGraphPoint, around: origin).y,
+      anchor.y,
+      accuracy: 0.0001
+    )
+  }
+
+  func testViewportCombinesPanAndZoomFromOneStartingTransform() {
+    let origin = CGPoint(x: 200, y: 300)
+    let anchor = CGPoint(x: 120, y: 210)
+    let translation = CGSize(width: 53, height: -28)
+    let start = GraphViewportTransform(
+      scale: 1.25,
+      offset: CGSize(width: 18, height: 22)
+    )
+    let anchoredGraphPoint = start.removing(from: anchor, around: origin)
+    let combined = start
+      .zoomed(by: 1.4, anchor: anchor, around: origin)
+      .panned(by: translation)
+    let screenPoint = combined.applying(to: anchoredGraphPoint, around: origin)
+
+    XCTAssertEqual(screenPoint.x, anchor.x + translation.width, accuracy: 0.0001)
+    XCTAssertEqual(screenPoint.y, anchor.y + translation.height, accuracy: 0.0001)
+  }
+
+  func testViewportZoomClampPreservesAnchorAtBothBounds() {
+    let origin = CGPoint(x: 200, y: 300)
+    let anchor = CGPoint(x: 75, y: 510)
+    let start = GraphViewportTransform(
+      scale: 1,
+      offset: CGSize(width: 11, height: -17)
+    )
+    let graphAnchor = start.removing(from: anchor, around: origin)
+
+    for (magnification, expectedScale) in [(CGFloat(100), CGFloat(2.5)), (0.01, 0.4)] {
+      let zoomed = start.zoomed(
+        by: magnification,
+        anchor: anchor,
+        around: origin
+      )
+      let screenPoint = zoomed.applying(to: graphAnchor, around: origin)
+      XCTAssertEqual(zoomed.scale, expectedScale, accuracy: 0.0001)
+      XCTAssertEqual(screenPoint.x, anchor.x, accuracy: 0.0001)
+      XCTAssertEqual(screenPoint.y, anchor.y, accuracy: 0.0001)
+    }
+  }
+
+  func testViewportTransformRoundTripsScreenAndGraphCoordinates() {
+    let origin = CGPoint(x: 197, y: 281)
+    let viewport = GraphViewportTransform(
+      scale: 2.3,
+      offset: CGSize(width: -83, height: 47)
+    )
+
+    for graphPoint in [CGPoint(x: -50, y: 80), origin, CGPoint(x: 640, y: 920)] {
+      let screenPoint = viewport.applying(to: graphPoint, around: origin)
+      let restored = viewport.removing(from: screenPoint, around: origin)
+      XCTAssertEqual(restored.x, graphPoint.x, accuracy: 0.0001)
+      XCTAssertEqual(restored.y, graphPoint.y, accuracy: 0.0001)
+    }
+  }
+
+  func testHitTestInverseUsesTheSameViewportAsRendering() {
+    let origin = CGPoint(x: 200, y: 300)
+    let graphCenter = CGPoint(x: 92, y: 540)
+    let viewport = GraphViewportTransform(
+      scale: 0.4,
+      offset: CGSize(width: 61, height: -34)
+    )
+    let screenCenter = viewport.applying(to: graphCenter, around: origin)
+    let hitGraphPoint = GraphHitTestGeometry.graphLocation(
+      for: screenCenter,
+      origin: origin,
+      viewport: viewport
+    )
+
+    XCTAssertEqual(hitGraphPoint.x, graphCenter.x, accuracy: 0.0001)
+    XCTAssertEqual(hitGraphPoint.y, graphCenter.y, accuracy: 0.0001)
+  }
+
+  func testExplicitFocusCameraCentersTargetAtCurrentScale() {
+    let origin = CGPoint(x: 200, y: 300)
+    let position = GraphGridPosition(level: -2, slot: 3)
+    let current = GraphViewportTransform(
+      scale: 1.4,
+      offset: CGSize(width: 90, height: -44)
+    )
+    let focused = GraphFocusTransition.viewport(
+      from: current,
+      centeredOn: position,
+      slotWidth: 108,
+      levelHeight: 120,
+      moveCamera: true
+    )
+    let graphCenter = GraphCanvasGeometry.beadCenter(
+      position: position,
+      origin: origin,
+      slotWidth: 108,
+      levelHeight: 120
+    )
+    let screenCenter = focused.applying(to: graphCenter, around: origin)
+
+    XCTAssertEqual(focused.scale, current.scale, accuracy: 0.0001)
+    XCTAssertEqual(screenCenter.x, origin.x, accuracy: 0.0001)
+    XCTAssertEqual(screenCenter.y, origin.y, accuracy: 0.0001)
+  }
+
+  func testVisualFocusOnlyDoesNotChangeViewportOffset() {
+    let current = GraphViewportTransform(
+      scale: 0.9,
+      offset: CGSize(width: -135, height: 72)
+    )
+    let result = GraphFocusTransition.viewport(
+      from: current,
+      centeredOn: GraphGridPosition(level: 4, slot: -3),
+      slotWidth: 108,
+      levelHeight: 120,
+      moveCamera: false
+    )
+
+    XCTAssertEqual(result, current)
+  }
+
   func testSemanticZoomCentralPolicyReducesOverviewNoise() {
     XCTAssertEqual(GraphSemanticZoomPolicy.level(for: 0.4), .overview)
     XCTAssertEqual(GraphSemanticZoomPolicy.level(for: 0.6), .overview)
