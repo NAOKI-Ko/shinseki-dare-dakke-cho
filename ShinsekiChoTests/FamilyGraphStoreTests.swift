@@ -579,6 +579,131 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertEqual(screenPoint.y, anchor.y + translation.height, accuracy: 0.0001)
   }
 
+  func testPureDragZeroPointsKeepsViewportUnchanged() {
+    let start = GraphViewportTransform(
+      scale: 1.2,
+      offset: CGSize(width: 24, height: -18)
+    )
+
+    let result = gestureTransform(from: start, translation: .zero)
+
+    XCTAssertEqual(result, start)
+  }
+
+  func testPureDragFivePointsKeepsViewportUnchanged() {
+    let start = GraphViewportTransform(
+      scale: 0.8,
+      offset: CGSize(width: -31, height: 42)
+    )
+
+    let result = gestureTransform(
+      from: start,
+      translation: CGSize(width: 3, height: 4)
+    )
+
+    XCTAssertEqual(result, start)
+  }
+
+  func testPureDragNinePointNinePointsKeepsViewportUnchanged() {
+    let start = GraphViewportTransform(
+      scale: 2,
+      offset: CGSize(width: 70, height: -52)
+    )
+
+    let result = gestureTransform(
+      from: start,
+      translation: CGSize(width: 9.9, height: 0)
+    )
+
+    XCTAssertEqual(result, start)
+  }
+
+  func testPureDragAtThresholdPansViewport() {
+    let start = GraphViewportTransform(
+      scale: 0.6,
+      offset: CGSize(width: 17, height: 29)
+    )
+    let translation = CGSize(width: 6, height: 8)
+
+    let result = gestureTransform(from: start, translation: translation)
+
+    XCTAssertEqual(result.scale, start.scale, accuracy: 0.0001)
+    XCTAssertEqual(result.offset.width, 23, accuracy: 0.0001)
+    XCTAssertEqual(result.offset.height, 37, accuracy: 0.0001)
+  }
+
+  func testTapLikeDragThenNodeExpansionKeepsViewportUnchanged() {
+    let start = GraphViewportTransform(
+      scale: 1.35,
+      offset: CGSize(width: -48, height: 63)
+    )
+    let afterTapLikeDrag = gestureTransform(
+      from: start,
+      translation: CGSize(width: 5, height: 4)
+    )
+    let afterExpansion = GraphFocusTransition.viewport(
+      from: afterTapLikeDrag,
+      centeredOn: GraphGridPosition(level: 2, slot: -1),
+      slotWidth: 108,
+      levelHeight: 120,
+      moveCamera: false
+    )
+
+    XCTAssertEqual(afterExpansion, start)
+  }
+
+  func testLongPressLikeMicroTranslationKeepsViewportUnchanged() {
+    let start = GraphViewportTransform(
+      scale: 2.1,
+      offset: CGSize(width: 91, height: -76)
+    )
+
+    let duringLongPress = gestureTransform(
+      from: start,
+      translation: CGSize(width: 7, height: 6)
+    )
+
+    XCTAssertEqual(duringLongPress, start)
+  }
+
+  func testMagnifyWithTranslationPreservesAnchorAndAppliesTranslation() {
+    let origin = CGPoint(x: 200, y: 300)
+    let anchor = CGPoint(x: 118, y: 176)
+    let translation = CGSize(width: 21, height: -14)
+    let start = GraphViewportTransform(
+      scale: 0.9,
+      offset: CGSize(width: -33, height: 46)
+    )
+    let graphAnchor = start.removing(from: anchor, around: origin)
+
+    let result = GraphViewportGesturePolicy.transform(
+      from: start,
+      magnification: 1.6,
+      anchor: anchor,
+      origin: origin,
+      translation: translation,
+      isMagnifying: true
+    )
+    let screenPoint = result.applying(to: graphAnchor, around: origin)
+
+    XCTAssertEqual(screenPoint.x, anchor.x + translation.width, accuracy: 0.0001)
+    XCTAssertEqual(screenPoint.y, anchor.y + translation.height, accuracy: 0.0001)
+  }
+
+  private func gestureTransform(
+    from start: GraphViewportTransform,
+    translation: CGSize
+  ) -> GraphViewportTransform {
+    GraphViewportGesturePolicy.transform(
+      from: start,
+      magnification: 1,
+      anchor: CGPoint(x: 200, y: 300),
+      origin: CGPoint(x: 200, y: 300),
+      translation: translation,
+      isMagnifying: false
+    )
+  }
+
   func testViewportZoomClampPreservesAnchorAtBothBounds() {
     let origin = CGPoint(x: 200, y: 300)
     let anchor = CGPoint(x: 75, y: 510)

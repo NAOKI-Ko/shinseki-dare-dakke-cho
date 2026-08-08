@@ -735,8 +735,10 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertEqual(cameraState(), cameraBeforeExpansion)
     keepScreenshot(app, name: "FamilyGraphUX_05_focused_person")
 
+    let cameraBeforeLongPress = cameraState()
     father.press(forDuration: 1.2)
     XCTAssertTrue(element("connectionMap.actionSheet", in: app).waitForExistence(timeout: 3))
+    XCTAssertEqual(cameraState(), cameraBeforeLongPress)
     XCTAssertTrue((father.value as? String)?.contains("展開済み") == true)
     keepScreenshot(app, name: "FamilyGraphUX_07_long_press_action_sheet")
 

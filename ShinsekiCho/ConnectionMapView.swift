@@ -257,6 +257,37 @@ struct GraphViewportTransform: Equatable {
   }
 }
 
+/// 1本指のtap候補とpan、2本指のMagnifyを同じcamera計算へ集約する。
+enum GraphViewportGesturePolicy {
+  static let panThreshold: CGFloat = 10
+
+  static func transform(
+    from start: GraphViewportTransform,
+    magnification: CGFloat,
+    anchor: CGPoint,
+    origin: CGPoint,
+    translation: CGSize,
+    isMagnifying: Bool
+  ) -> GraphViewportTransform {
+    if isMagnifying {
+      return start
+        .zoomed(by: magnification, anchor: anchor, around: origin)
+        .panned(by: translation)
+    }
+
+    guard dragDistance(translation) >= panThreshold else { return start }
+    return start.panned(by: translation)
+  }
+
+  static func isTapLike(_ translation: CGSize) -> Bool {
+    dragDistance(translation) < panThreshold
+  }
+
+  private static func dragDistance(_ translation: CGSize) -> CGFloat {
+    hypot(translation.width, translation.height)
+  }
+}
+
 enum GraphSemanticZoomLevel: String, Equatable {
   case overview
   case normal
@@ -1356,27 +1387,41 @@ struct FamilyGraphView: View {
         let magnification = value.first?.magnification ?? 1
         let anchor = value.first?.startLocation ?? origin
         let translation = value.second?.translation ?? .zero
-        viewportTransform = start
-          .zoomed(by: magnification, anchor: anchor, around: origin)
-          .panned(by: translation)
+        viewportTransform = GraphViewportGesturePolicy.transform(
+          from: start,
+          magnification: magnification,
+          anchor: anchor,
+          origin: origin,
+          translation: translation,
+          isMagnifying: value.first != nil
+        )
       }
       .onEnded { value in
         let start = gestureStartTransform ?? viewportTransform
         let magnification = value.first?.magnification ?? 1
         let anchor = value.first?.startLocation ?? origin
         let translation = value.second?.translation ?? .zero
-        let finalTransform = start
-          .zoomed(by: magnification, anchor: anchor, around: origin)
-          .panned(by: translation)
-        viewportTransform = finalTransform
-        gestureStartTransform = nil
 
         if suppressTapAfterLongPress {
+          viewportTransform = start
+          gestureStartTransform = nil
           suppressTapAfterLongPress = false
           return
         }
+
+        let finalTransform = GraphViewportGesturePolicy.transform(
+          from: start,
+          magnification: magnification,
+          anchor: anchor,
+          origin: origin,
+          translation: translation,
+          isMagnifying: value.first != nil
+        )
+        viewportTransform = finalTransform
+        gestureStartTransform = nil
+
         guard value.first == nil, let drag = value.second else { return }
-        if hypot(drag.translation.width, drag.translation.height) < 10,
+        if GraphViewportGesturePolicy.isTapLike(drag.translation),
            let tappedNode = node(
              at: drag.location,
              origin: origin,
