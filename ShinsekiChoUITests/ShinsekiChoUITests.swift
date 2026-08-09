@@ -1311,4 +1311,47 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(element("personForm.name", in: app).waitForExistence(timeout: 5))
     XCTAssertFalse(element("purchase.sheet", in: app).exists)
   }
+
+  func testBackupExportRemainsAvailableWhileExpiredRestoreIsLocked() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-trial-expired"]
+    )
+    app.tabBars.buttons["設定"].tap()
+
+    let exportButton = app.buttons["settings.backup.export"]
+    reveal(exportButton, in: app)
+    XCTAssertTrue(exportButton.exists)
+    XCTAssertTrue(exportButton.isEnabled)
+    XCTAssertTrue(element("settings.backup.privacy", in: app).exists)
+
+    let restoreButton = app.buttons["settings.backup.restore"]
+    XCTAssertTrue(restoreButton.exists)
+    restoreButton.tap()
+    XCTAssertTrue(element("purchase.sheet", in: app).waitForExistence(timeout: 5))
+  }
+
+  func testBackupRestorePreviewCanBeCancelledWithoutChangingCurrentData() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-backup-preview"]
+    )
+    app.tabBars.buttons["設定"].tap()
+
+    let restoreButton = app.buttons["settings.backup.restore"]
+    reveal(restoreButton, in: app)
+    XCTAssertTrue(restoreButton.isHittable)
+    restoreButton.tap()
+
+    XCTAssertTrue(element("backup.preview.people", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(element("backup.preview.gatherings", in: app).exists)
+    XCTAssertTrue(element("backup.preview.warning", in: app).exists)
+    XCTAssertTrue(app.buttons["backup.preview.confirm"].exists)
+    app.buttons["backup.preview.cancel"].tap()
+
+    let selfName = element("settings.selfName", in: app)
+    reveal(selfName, in: app)
+    XCTAssertTrue(selfName.waitForExistence(timeout: 5))
+    XCTAssertTrue(selfName.label.contains("山田 太郎"))
+  }
 }
