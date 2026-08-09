@@ -120,6 +120,17 @@ struct ShinsekiChoApp: App {
             kana: "さとう けんた",
             relationNote: "配偶者の兄"
         )
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist") {
+            spouseBrother.lastMetDate = Calendar(identifier: .gregorian).date(
+                from: DateComponents(year: 2026, month: 7, day: 12)
+            )
+            spouseBrother.lastMetPlace = "名古屋"
+            spouseBrother.livingArea = "横浜"
+            spouseBrother.memo = "次は登山の話を聞く"
+            spouseBrother.favorites = "珈琲と登山"
+        }
+        #endif
         let nephew = Person(
             name: "佐藤 蓮",
             kana: "さとう れん",
@@ -176,6 +187,11 @@ struct ShinsekiChoApp: App {
         )
         context.insert(gathering)
         gathering.attendees.append(selfPerson)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist") {
+            gathering.attendees.append(spouseBrother)
+        }
+        #endif
         if let mergeDuplicate { gathering.attendees.append(mergeDuplicate) }
         try context.save()
     }

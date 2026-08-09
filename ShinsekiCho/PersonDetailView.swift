@@ -55,6 +55,14 @@ struct PersonDetailView: View {
                 .listRowBackground(Color.clear)
             }
 
+            // 保存済み情報だけで「この人は誰か」を先に思い出せるようにする。
+            // 経路は永続化せず、現在の関係グラフから表示のたびに再計算する。
+            Section {
+                PersonMemorySummaryCard(summary: memorySummary)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    .listRowBackground(Color.clear)
+            }
+
             // 関係の編集は、縦に大きいつながりマップより前に置き、
             // 詳細を開いた直後に見つけられるようにする。
             Section {
@@ -201,6 +209,7 @@ struct PersonDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.inkSoft)
                         }
+                        .accessibilityIdentifier("personDetail.gathering.\(gathering.title)")
                     }
                 }
                 .listRowBackground(AppTheme.paperRaised)
@@ -255,6 +264,13 @@ struct PersonDetailView: View {
             && person.dietaryNotes.isEmpty
     }
 
+    private var memorySummary: PersonMemorySummary {
+        PersonMemorySummaryBuilder.make(
+            selfPerson: selfPersonQuery.first,
+            target: person
+        )
+    }
+
     private func requestEditing(_ action: () -> Void) {
         if trialManager.canEdit {
             action()
@@ -281,6 +297,109 @@ struct PersonDetailView: View {
         .frame(width: 84, height: 84)
         .clipShape(Circle())
         .overlay(Circle().stroke(AppTheme.ai.opacity(0.35), lineWidth: 1.5))
+    }
+}
+
+private struct PersonMemorySummaryCard: View {
+    let summary: PersonMemorySummary
+
+    var body: some View {
+        HairlineCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("この人を思い出す", systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.minchoAmount(15, relativeTo: .headline).weight(.semibold))
+                    .foregroundStyle(AppTheme.ink)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("自分とのつながり")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.inkSoft)
+                    Text(summary.relationship.breadcrumb)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(AppTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("personMemory.relationship")
+                        .accessibilityLabel(
+                            "自分とのつながり、"
+                                + summary.relationship.breadcrumb
+                                    .replacingOccurrences(of: " → ", with: "、")
+                        )
+
+                    if let label = summary.relationship.structuredLabel {
+                        Text(label)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AppTheme.ai)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 3)
+                            .background(AppTheme.ai.opacity(0.08), in: Capsule())
+                            .accessibilityIdentifier("personMemory.structuredRelation")
+                    }
+                }
+
+                if let lastMet = summary.lastMet {
+                    memoryRow(
+                        title: "最後に会った",
+                        value: lastMet.date.formatted(.dateTime.year().month().day())
+                            + (lastMet.place.map { "・\($0)" } ?? ""),
+                        identifier: "personMemory.lastMet"
+                    )
+                }
+                if let livingArea = summary.livingArea {
+                    memoryRow(
+                        title: "住んでいるところ",
+                        value: livingArea,
+                        identifier: "personMemory.livingArea"
+                    )
+                }
+                if let memo = summary.memo {
+                    memoryRow(
+                        title: "会話のきっかけ",
+                        value: memo,
+                        identifier: "personMemory.memo",
+                        lineLimit: 2
+                    )
+                }
+                if let favorites = summary.favorites {
+                    memoryRow(
+                        title: "好きなもの・苦手なもの",
+                        value: favorites,
+                        identifier: "personMemory.favorites",
+                        lineLimit: 2
+                    )
+                }
+                if let gathering = summary.latestGathering {
+                    memoryRow(
+                        title: "最近の集まり",
+                        value: "\(gathering.title)・\(gathering.date.formatted(.dateTime.year().month().day()))",
+                        identifier: "personMemory.latestGathering",
+                        lineLimit: 2
+                    )
+                }
+            }
+            .padding(14)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("personMemory.summary")
+    }
+
+    private func memoryRow(
+        title: String,
+        value: String,
+        identifier: String,
+        lineLimit: Int = 1
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(AppTheme.inkSoft)
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.ink)
+                .lineLimit(lineLimit)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier)
+                .accessibilityLabel("\(title)、\(value)")
+        }
     }
 }
 

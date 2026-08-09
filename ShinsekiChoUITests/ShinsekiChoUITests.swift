@@ -48,6 +48,20 @@ final class ShinsekiChoUITests: XCTestCase {
     }
   }
 
+  /// つながりマップ上のドラッグとして奪われないよう、Listの左端から人物詳細を送る。
+  private func revealInPersonDetail(
+    _ element: XCUIElement,
+    in app: XCUIApplication,
+    maxSwipes: Int = 16
+  ) {
+    for _ in 0..<maxSwipes {
+      if element.exists, element.isHittable { return }
+      let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.78))
+      let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.28))
+      start.press(forDuration: 0.05, thenDragTo: end)
+    }
+  }
+
   private func keepScreenshot(
     _ app: XCUIApplication,
     name: String
@@ -892,20 +906,64 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(app.buttons["編集"].exists)
   }
 
-  func testRelationEditorButtonIsVisibleDirectlyBelowProfileHeader() {
+  func testRelationEditorRemainsDiscoverableAfterMemorySummary() {
     let app = launch(seed: true)
     showList(in: app)
     let selfCell = element("person.cell.山田 太郎", in: app)
     XCTAssertTrue(selfCell.waitForExistence(timeout: 5))
     selfCell.tap()
 
+    let memorySummary = element("personMemory.summary", in: app)
+    XCTAssertTrue(memorySummary.waitForExistence(timeout: 5))
+    XCTAssertTrue(memorySummary.isHittable)
+
     let relationButton = app.buttons["personDetail.editRelations"]
     XCTAssertTrue(relationButton.waitForExistence(timeout: 5))
     XCTAssertTrue(relationButton.isHittable)
-    XCTAssertLessThan(relationButton.frame.maxY, app.frame.midY + 120)
+    XCTAssertLessThan(memorySummary.frame.minY, relationButton.frame.minY)
 
     relationButton.tap()
     XCTAssertTrue(app.navigationBars["山田 太郎さんの関係"].waitForExistence(timeout: 5))
+  }
+
+  func testMemoryAssistSummaryShowsMultiHopRecallInInitialViewport() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-memory-assist"]
+    )
+    showList(in: app)
+
+    let kentaCell = element("person.cell.佐藤 健太", in: app)
+    reveal(kentaCell, in: app)
+    XCTAssertTrue(kentaCell.waitForExistence(timeout: 5))
+    kentaCell.tap()
+    XCTAssertTrue(app.navigationBars["佐藤 健太"].waitForExistence(timeout: 5))
+
+    let relationship = element("personMemory.relationship", in: app)
+    XCTAssertTrue(relationship.waitForExistence(timeout: 5))
+    XCTAssertTrue(relationship.isHittable)
+    XCTAssertTrue(relationship.label.contains("自分"))
+    XCTAssertTrue(relationship.label.contains("配偶者"))
+    XCTAssertTrue(relationship.label.contains("配偶者の父"))
+    XCTAssertTrue(relationship.label.contains("配偶者の兄（佐藤 健太）"))
+
+    let lastMet = element("personMemory.lastMet", in: app)
+    let livingArea = element("personMemory.livingArea", in: app)
+    let memo = element("personMemory.memo", in: app)
+    let latestGathering = element("personMemory.latestGathering", in: app)
+    XCTAssertTrue(lastMet.waitForExistence(timeout: 5))
+    XCTAssertTrue(livingArea.waitForExistence(timeout: 5))
+    XCTAssertTrue(memo.waitForExistence(timeout: 5))
+    XCTAssertTrue(latestGathering.waitForExistence(timeout: 5))
+    XCTAssertTrue(lastMet.isHittable)
+    XCTAssertTrue(livingArea.isHittable)
+    XCTAssertTrue(memo.isHittable)
+
+    let relationButton = app.buttons["personDetail.editRelations"]
+    XCTAssertTrue(relationButton.waitForExistence(timeout: 5))
+    XCTAssertTrue(relationButton.isHittable)
+    XCTAssertLessThan(relationship.frame.minY, relationButton.frame.minY)
+    keepScreenshot(app, name: "Phase6_佐藤健太_記憶サマリー_初期表示")
   }
 
   func testRelationshipCorrectionReplacesAndUnlinksParentWithoutDeletingPeople() {
@@ -995,19 +1053,26 @@ final class ShinsekiChoUITests: XCTestCase {
     alert.buttons["統合する"].tap()
 
     XCTAssertTrue(app.navigationBars["山田 花子"].waitForExistence(timeout: 5))
-    XCTAssertTrue(element("personDetail.phoneLink", in: app).waitForExistence(timeout: 5))
-    let memo = element("personDetail.memo", in: app)
-    reveal(memo, in: app, maxSwipes: 10)
-    XCTAssertTrue(memo.waitForExistence(timeout: 5))
-    XCTAssertTrue(memo.label.contains("重複側にだけある会話メモ"))
+    let summaryMemo = element("personMemory.memo", in: app)
+    XCTAssertTrue(summaryMemo.waitForExistence(timeout: 5))
+    XCTAssertTrue(summaryMemo.label.contains("重複側にだけある会話メモ"))
+
+    let phone = element("personDetail.phoneLink", in: app)
+    revealInPersonDetail(phone, in: app)
+    XCTAssertTrue(phone.waitForExistence(timeout: 5))
 
     let canvas = element("connectionMap.canvas", in: app)
-    reveal(canvas, in: app, maxSwipes: 10)
+    revealInPersonDetail(canvas, in: app)
     XCTAssertTrue(canvas.waitForExistence(timeout: 5))
     let motherNode = element("connectionMap.node.山田 花子", in: app)
     XCTAssertTrue(motherNode.waitForExistence(timeout: 5))
     motherNode.tap()
     XCTAssertTrue(element("connectionMap.node.重複側の子", in: app).waitForExistence(timeout: 5))
+
+    let memo = element("personDetail.memo", in: app)
+    revealInPersonDetail(memo, in: app)
+    XCTAssertTrue(memo.waitForExistence(timeout: 5))
+    XCTAssertTrue(memo.label.contains("重複側にだけある会話メモ"))
 
     app.navigationBars["山田 花子"].buttons.firstMatch.tap()
     XCTAssertTrue(element("person.cell.山田 花子", in: app).waitForExistence(timeout: 5))
@@ -1026,11 +1091,11 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(relationButton.isHittable)
     keepScreenshot(app, name: "人物詳細_01_見出しと関係編集_ライト")
 
-    let scrollStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.76))
-    let scrollEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.28))
-    scrollStart.press(forDuration: 0.05, thenDragTo: scrollEnd)
+    let canvas = element("connectionMap.canvas", in: app)
+    revealInPersonDetail(canvas, in: app)
     XCTAssertTrue(element("connectionMap.node.山田 太郎", in: app).waitForExistence(timeout: 5))
-    let gathering = app.staticTexts["祖母の一周忌"]
+    let gathering = element("personDetail.gathering.祖母の一周忌", in: app)
+    revealInPersonDetail(gathering, in: app)
     XCTAssertTrue(gathering.waitForExistence(timeout: 5))
     keepScreenshot(app, name: "人物詳細_02_プロフィール・つながり・集まり_ライト")
   }
