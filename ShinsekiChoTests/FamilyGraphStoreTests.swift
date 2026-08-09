@@ -1260,4 +1260,82 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertEqual(GraphNodeSurfaceContract.baseOpacity, 1.0)
     XCTAssertLessThan(GraphNodeSurfaceContract.inactiveContentOpacity, 1.0)
   }
+
+  func testRebuiltGraphRemovesUnlinkedSpouseEdgeAndCoupleKnot() throws {
+    let fixture = try makeFixture()
+    let before = FamilyGraphStore()
+    before.reset(with: fixture.a)
+    before.expand(fixture.a)
+    XCTAssertTrue(hasEdge(before, fixture.a, fixture.c, kind: .spouse))
+
+    XCTAssertTrue(try RelationshipManager.unlink(
+      .spouse,
+      person: fixture.a,
+      relative: fixture.c
+    ))
+    let rebuilt = FamilyGraphStore()
+    rebuilt.reset(with: fixture.a)
+    rebuilt.expand(fixture.a)
+
+    XCTAssertFalse(hasEdge(rebuilt, fixture.a, fixture.c, kind: .spouse))
+    XCTAssertNil(rebuilt.nodes[key(fixture.c)])
+    XCTAssertTrue(rebuilt.coupleRenderModel.knots.isEmpty)
+  }
+
+  func testRebuiltGraphRemovesUnlinkedParentChildEdge() throws {
+    let fixture = try makeFixture()
+    let before = FamilyGraphStore()
+    before.reset(with: fixture.a)
+    before.expand(fixture.a)
+    XCTAssertTrue(hasEdge(before, fixture.a, fixture.b, kind: .parentChild))
+
+    XCTAssertTrue(try RelationshipManager.unlink(
+      .parent,
+      person: fixture.a,
+      relative: fixture.b
+    ))
+    let rebuilt = FamilyGraphStore()
+    rebuilt.reset(with: fixture.a)
+    rebuilt.expand(fixture.a)
+
+    XCTAssertFalse(hasEdge(rebuilt, fixture.a, fixture.b, kind: .parentChild))
+    XCTAssertNil(rebuilt.nodes[key(fixture.b)])
+  }
+
+  func testRemovingOneParentLinkMovesChildOutOfCoupleKnot() throws {
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try ModelContainer(
+      for: Person.self,
+      Gathering.self,
+      configurations: configuration
+    )
+    let a = Person(name: "A", isSelf: true)
+    let b = Person(name: "B")
+    let child = Person(name: "C")
+    [a, b, child].forEach(container.mainContext.insert)
+    try container.mainContext.save()
+    XCTAssertTrue(RelationshipManager.setSpouse(a, b))
+    XCTAssertTrue(RelationshipManager.addChild(child, to: a, includeSpouse: true))
+
+    let before = FamilyGraphStore()
+    before.reset(with: a)
+    before.expand(a)
+    XCTAssertEqual(before.coupleRenderModel.knots.first?.commonChildren, [key(child)])
+
+    XCTAssertTrue(try RelationshipManager.unlink(.parent, person: child, relative: b))
+    let rebuilt = FamilyGraphStore()
+    rebuilt.reset(with: a)
+    rebuilt.expand(a)
+
+    XCTAssertTrue(rebuilt.coupleRenderModel.knots.isEmpty)
+    XCTAssertTrue(hasEdge(rebuilt, a, child, kind: .parentChild))
+    XCTAssertFalse(hasEdge(rebuilt, b, child, kind: .parentChild))
+    XCTAssertFalse(rebuilt.coupleRenderModel.suppressedEdgeIDs.contains(where: { edgeID in
+      rebuilt.edges.contains { edge in
+        edge.id == edgeID
+          && ((edge.from == key(a) && edge.to == key(child))
+            || (edge.from == key(child) && edge.to == key(a)))
+      }
+    }))
+  }
 }

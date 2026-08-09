@@ -691,4 +691,298 @@ final class RelationshipManagerTests: XCTestCase {
         XCTAssertEqual(person.memo, "次は旅行の話を聞く")
         XCTAssertTrue(person.hasContact)
     }
+
+    func testSpouseUnlinkRemovesBothDirections() throws {
+        let container = try makeContainer()
+        let a = Person(name: "A")
+        let b = Person(name: "B")
+        try insert([a, b], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.setSpouse(a, b))
+
+        XCTAssertTrue(try RelationshipManager.unlink(.spouse, person: a, relative: b))
+
+        XCTAssertNil(a.spouse)
+        XCTAssertNil(b.spouse)
+    }
+
+    func testParentUnlinkRemovesBothDirectionsAndKeepsOtherParent() throws {
+        let container = try makeContainer()
+        let child = Person(name: "子")
+        let parentA = Person(name: "親A")
+        let parentB = Person(name: "親B")
+        try insert([child, parentA, parentB], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parentA, child: child))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parentB, child: child))
+
+        XCTAssertTrue(try RelationshipManager.unlink(.parent, person: child, relative: parentA))
+
+        XCTAssertFalse(parentA.children.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertFalse(child.parents.contains { $0.persistentModelID == parentA.persistentModelID })
+        XCTAssertTrue(parentB.children.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertTrue(child.parents.contains { $0.persistentModelID == parentB.persistentModelID })
+    }
+
+    func testChildUnlinkRemovesBothDirections() throws {
+        let container = try makeContainer()
+        let parent = Person(name: "親")
+        let child = Person(name: "子")
+        try insert([parent, child], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parent, child: child))
+
+        XCTAssertTrue(try RelationshipManager.unlink(.child, person: parent, relative: child))
+
+        XCTAssertTrue(parent.children.isEmpty)
+        XCTAssertTrue(child.parents.isEmpty)
+    }
+
+    func testSpouseUnlinkPreservesEveryParentChildRelationship() throws {
+        let container = try makeContainer()
+        let a = Person(name: "A")
+        let b = Person(name: "B")
+        let sharedChild = Person(name: "共同子")
+        let aOnlyChild = Person(name: "Aのみの子")
+        try insert([a, b, sharedChild, aOnlyChild], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.setSpouse(a, b))
+        XCTAssertTrue(RelationshipManager.addChild(sharedChild, to: a, includeSpouse: true))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: a, child: aOnlyChild))
+
+        XCTAssertTrue(try RelationshipManager.unlink(.spouse, person: a, relative: b))
+
+        XCTAssertEqual(Set(a.children.map(\.persistentModelID)), Set([sharedChild.persistentModelID, aOnlyChild.persistentModelID]))
+        XCTAssertEqual(b.children.map(\.persistentModelID), [sharedChild.persistentModelID])
+        XCTAssertEqual(Set(sharedChild.parents.map(\.persistentModelID)), Set([a.persistentModelID, b.persistentModelID]))
+        XCTAssertEqual(aOnlyChild.parents.map(\.persistentModelID), [a.persistentModelID])
+    }
+
+    func testParentReplacementUpdatesBothDirections() throws {
+        let container = try makeContainer()
+        let child = Person(name: "子")
+        let oldParent = Person(name: "旧親")
+        let newParent = Person(name: "新親")
+        try insert([child, oldParent, newParent], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: oldParent, child: child))
+
+        XCTAssertTrue(try RelationshipManager.replace(
+            .parent,
+            person: child,
+            oldRelative: oldParent,
+            newRelative: newParent
+        ))
+
+        XCTAssertTrue(oldParent.children.isEmpty)
+        XCTAssertFalse(child.parents.contains { $0.persistentModelID == oldParent.persistentModelID })
+        XCTAssertTrue(newParent.children.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertTrue(child.parents.contains { $0.persistentModelID == newParent.persistentModelID })
+    }
+
+    func testParentReplacementWorksWhenChildAlreadyHasTwoParents() throws {
+        let container = try makeContainer()
+        let child = Person(name: "子")
+        let oldParent = Person(name: "旧親")
+        let retainedParent = Person(name: "維持する親")
+        let newParent = Person(name: "新親")
+        try insert([child, oldParent, retainedParent, newParent], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: oldParent, child: child))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: retainedParent, child: child))
+
+        XCTAssertTrue(RelationshipManager.canReplace(
+            .parent,
+            person: child,
+            oldRelative: oldParent,
+            newRelative: newParent
+        ))
+        XCTAssertTrue(try RelationshipManager.replace(
+            .parent,
+            person: child,
+            oldRelative: oldParent,
+            newRelative: newParent
+        ))
+
+        XCTAssertEqual(Set(child.parents.map(\.persistentModelID)), Set([retainedParent.persistentModelID, newParent.persistentModelID]))
+        XCTAssertTrue(oldParent.children.isEmpty)
+        XCTAssertTrue(retainedParent.children.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertTrue(newParent.children.contains { $0.persistentModelID == child.persistentModelID })
+    }
+
+    func testSpouseReplacementUpdatesBothDirectionsWithoutTransferringChildren() throws {
+        let container = try makeContainer()
+        let person = Person(name: "本人")
+        let oldSpouse = Person(name: "旧配偶者")
+        let newSpouse = Person(name: "新配偶者")
+        let sharedChild = Person(name: "共同子")
+        try insert([person, oldSpouse, newSpouse, sharedChild], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.setSpouse(person, oldSpouse))
+        XCTAssertTrue(RelationshipManager.addChild(sharedChild, to: person, includeSpouse: true))
+
+        XCTAssertTrue(try RelationshipManager.replace(
+            .spouse,
+            person: person,
+            oldRelative: oldSpouse,
+            newRelative: newSpouse
+        ))
+
+        XCTAssertNil(oldSpouse.spouse)
+        XCTAssertEqual(person.spouse?.persistentModelID, newSpouse.persistentModelID)
+        XCTAssertEqual(newSpouse.spouse?.persistentModelID, person.persistentModelID)
+        XCTAssertTrue(oldSpouse.children.contains { $0.persistentModelID == sharedChild.persistentModelID })
+        XCTAssertFalse(newSpouse.children.contains { $0.persistentModelID == sharedChild.persistentModelID })
+        XCTAssertEqual(Set(sharedChild.parents.map(\.persistentModelID)), Set([person.persistentModelID, oldSpouse.persistentModelID]))
+    }
+
+    func testInvalidSpouseReplacementPreservesOldRelationship() throws {
+        let container = try makeContainer()
+        let person = Person(name: "本人")
+        let oldSpouse = Person(name: "旧配偶者")
+        let ancestor = Person(name: "祖先")
+        try insert([person, oldSpouse, ancestor], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: ancestor, child: person))
+        XCTAssertTrue(RelationshipManager.setSpouse(person, oldSpouse))
+
+        XCTAssertFalse(RelationshipManager.canReplace(
+            .spouse,
+            person: person,
+            oldRelative: oldSpouse,
+            newRelative: ancestor
+        ))
+        XCTAssertThrowsError(try RelationshipManager.replace(
+            .spouse,
+            person: person,
+            oldRelative: oldSpouse,
+            newRelative: ancestor
+        ))
+
+        XCTAssertEqual(person.spouse?.persistentModelID, oldSpouse.persistentModelID)
+        XCTAssertEqual(oldSpouse.spouse?.persistentModelID, person.persistentModelID)
+        XCTAssertNil(ancestor.spouse)
+    }
+
+    func testAncestryCycleParentReplacementIsRejectedWithoutMutation() throws {
+        let container = try makeContainer()
+        let oldParent = Person(name: "旧親")
+        let person = Person(name: "本人")
+        let descendant = Person(name: "子孫")
+        try insert([oldParent, person, descendant], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: oldParent, child: person))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: person, child: descendant))
+
+        XCTAssertFalse(RelationshipManager.canReplace(
+            .parent,
+            person: person,
+            oldRelative: oldParent,
+            newRelative: descendant
+        ))
+        XCTAssertThrowsError(try RelationshipManager.replace(
+            .parent,
+            person: person,
+            oldRelative: oldParent,
+            newRelative: descendant
+        ))
+
+        XCTAssertEqual(person.parents.map(\.persistentModelID), [oldParent.persistentModelID])
+        XCTAssertTrue(oldParent.children.contains { $0.persistentModelID == person.persistentModelID })
+        XCTAssertEqual(descendant.parents.map(\.persistentModelID), [person.persistentModelID])
+    }
+
+    func testReplacementSaveFailureRollsBackToOriginalRelationship() throws {
+        enum ForcedSaveFailure: Error { case failed }
+        let container = try makeContainer()
+        let context = container.mainContext
+        let child = Person(name: "子")
+        let oldParent = Person(name: "旧親")
+        let newParent = Person(name: "新親")
+        try insert([child, oldParent, newParent], into: context)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: oldParent, child: child))
+        try context.save()
+
+        XCTAssertThrowsError(
+            try RelationshipTransaction.perform(
+                in: context,
+                save: { _ in throw ForcedSaveFailure.failed }
+            ) {
+                try RelationshipManager.replace(
+                    .parent,
+                    person: child,
+                    oldRelative: oldParent,
+                    newRelative: newParent
+                )
+            }
+        )
+
+        XCTAssertEqual(child.parents.map(\.persistentModelID), [oldParent.persistentModelID])
+        XCTAssertTrue(oldParent.children.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertTrue(newParent.children.isEmpty)
+    }
+
+    func testUnlinkAllowsOrphanPersonToRemainStored() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let parent = Person(name: "親")
+        let child = Person(name: "孤立して残る人物")
+        try insert([parent, child], into: context)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parent, child: child))
+
+        XCTAssertTrue(try RelationshipManager.unlink(.parent, person: child, relative: parent))
+        try context.save()
+
+        let people = try context.fetch(FetchDescriptor<Person>())
+        XCTAssertEqual(people.count, 2)
+        XCTAssertTrue(people.contains { $0.persistentModelID == child.persistentModelID })
+        XCTAssertTrue(child.parents.isEmpty)
+        XCTAssertTrue(child.children.isEmpty)
+        XCTAssertNil(child.spouse)
+    }
+
+    func testDeletePersonDetachesSpouseBeforeDeletion() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let person = Person(name: "削除対象")
+        let spouse = Person(name: "残る配偶者")
+        try insert([person, spouse], into: context)
+        XCTAssertTrue(RelationshipManager.setSpouse(person, spouse))
+        try context.save()
+
+        RelationshipManager.delete(person, from: context)
+        try context.save()
+
+        XCTAssertNil(spouse.spouse)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Person>()).map(\.name), ["残る配偶者"])
+    }
+
+    func testDeletePersonDetachesParentsBeforeDeletion() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let person = Person(name: "削除対象")
+        let parentA = Person(name: "親A")
+        let parentB = Person(name: "親B")
+        try insert([person, parentA, parentB], into: context)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parentA, child: person))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parentB, child: person))
+        try context.save()
+
+        RelationshipManager.delete(person, from: context)
+        try context.save()
+
+        XCTAssertTrue(parentA.children.isEmpty)
+        XCTAssertTrue(parentB.children.isEmpty)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Person>()).count, 2)
+    }
+
+    func testDeletePersonDetachesChildrenBeforeDeletion() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let person = Person(name: "削除対象")
+        let childA = Person(name: "子A")
+        let childB = Person(name: "子B")
+        try insert([person, childA, childB], into: context)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: person, child: childA))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: person, child: childB))
+        try context.save()
+
+        RelationshipManager.delete(person, from: context)
+        try context.save()
+
+        XCTAssertTrue(childA.parents.isEmpty)
+        XCTAssertTrue(childB.parents.isEmpty)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Person>()).count, 2)
+    }
 }

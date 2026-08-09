@@ -136,6 +136,7 @@ enum RelationshipLinkError: LocalizedError, Equatable {
     case spouseUnavailable
     case parentLimit
     case alreadyLinked
+    case relationshipNotFound
     case invalidFamilyCycle
     case incompatibleRelationship
 
@@ -149,6 +150,8 @@ enum RelationshipLinkError: LocalizedError, Equatable {
             "親は2人まで登録できます。"
         case .alreadyLinked:
             "この関係はすでに登録されています。"
+        case .relationshipNotFound:
+            "変更または解除する関係が見つかりません。"
         case .invalidFamilyCycle:
             "祖先と子孫が循環する親子関係は登録できません。"
         case .incompatibleRelationship:
@@ -164,6 +167,16 @@ enum RelationshipTransaction {
         in context: ModelContext,
         _ mutation: () throws -> Value
     ) throws -> Value {
+        try perform(in: context, save: { try $0.save() }, mutation)
+    }
+
+    /// save処理を注入できる内部経路。保存失敗時の完全rollbackを決定論的に検証する。
+    @discardableResult
+    static func perform<Value>(
+        in context: ModelContext,
+        save: (ModelContext) throws -> Void,
+        _ mutation: () throws -> Value
+    ) throws -> Value {
         let previousUndoManager = context.undoManager
         let undoManager = UndoManager()
         context.undoManager = undoManager
@@ -175,7 +188,7 @@ enum RelationshipTransaction {
             context.processPendingChanges()
             undoManager.endUndoGrouping()
             undoGroupIsOpen = false
-            try context.save()
+            try save(context)
             undoManager.removeAllActions()
             context.undoManager = previousUndoManager
             return value
@@ -203,16 +216,33 @@ enum RelationshipManager {
 
     /// ancestorからchildrenを辿ってpersonへ到達できるか。壊れた既存データでも停止する。
     static func isAncestor(_ ancestor: Person, of person: Person) -> Bool {
+        isAncestor(ancestor, of: person, excludingParentChild: nil)
+    }
+
+    /// relationship置換時は、外す予定の親子edgeを除いた仮想グラフで判定する。
+    private static func isAncestor(
+        _ ancestor: Person,
+        of person: Person,
+        excludingParentChild excluded: (parent: PersistentIdentifier, child: PersistentIdentifier)?
+    ) -> Bool {
         guard !isSamePerson(ancestor, person) else { return false }
         let targetID = person.persistentModelID
         var visited = Set<PersistentIdentifier>()
-        var pending = Array(ancestor.children)
+        var pending = [ancestor]
 
-        while let candidate = pending.popLast() {
-            let candidateID = candidate.persistentModelID
-            guard visited.insert(candidateID).inserted else { continue }
-            if candidateID == targetID { return true }
-            pending.append(contentsOf: candidate.children)
+        while let current = pending.popLast() {
+            let currentID = current.persistentModelID
+            guard visited.insert(currentID).inserted else { continue }
+            for child in current.children {
+                let childID = child.persistentModelID
+                if let excluded,
+                   excluded.parent == currentID,
+                   excluded.child == childID {
+                    continue
+                }
+                if childID == targetID { return true }
+                pending.append(child)
+            }
         }
         return false
     }
@@ -223,7 +253,16 @@ enum RelationshipManager {
 
     /// parent -> childを追加した結果、childからparentへ戻る閉路ができるか。
     static func wouldCreateAncestryCycle(parent: Person, child: Person) -> Bool {
-        isSamePerson(parent, child) || isAncestor(child, of: parent)
+        wouldCreateAncestryCycle(parent: parent, child: child, excludingParentChild: nil)
+    }
+
+    private static func wouldCreateAncestryCycle(
+        parent: Person,
+        child: Person,
+        excludingParentChild excluded: (parent: PersistentIdentifier, child: PersistentIdentifier)?
+    ) -> Bool {
+        isSamePerson(parent, child)
+            || isAncestor(child, of: parent, excludingParentChild: excluded)
     }
 
     private static func hasLinealRelationship(_ a: Person, _ b: Person) -> Bool {
@@ -272,12 +311,26 @@ enum RelationshipManager {
         return true
     }
 
-    /// 配偶者関係を解消する
-    static func removeSpouse(of person: Person) {
-        if let partner = person.spouse {
-            partner.spouse = nil
+    /// 指定した2人の配偶者参照だけを双方向に解除する。
+    @discardableResult
+    private static func removeSpouse(_ a: Person, _ b: Person) -> Bool {
+        var changed = false
+        if a.spouse?.persistentModelID == b.persistentModelID {
+            a.spouse = nil
+            changed = true
         }
-        person.spouse = nil
+        if b.spouse?.persistentModelID == a.persistentModelID {
+            b.spouse = nil
+            changed = true
+        }
+        return changed
+    }
+
+    /// 配偶者関係を解消する。共同子を含む親子関係には触れない。
+    @discardableResult
+    static func removeSpouse(of person: Person) -> Bool {
+        guard let partner = person.spouse else { return false }
+        return removeSpouse(person, partner)
     }
 
     /// 親子関係を安全に追加できるか。親は最大2人、自己関係は禁止。
@@ -409,6 +462,188 @@ enum RelationshipManager {
         }
     }
 
+    /// personから見たkindとして、relativeとの関係が現在存在するか。
+    static func isLinked(
+        _ kind: RelationshipKind,
+        person: Person,
+        relative: Person
+    ) -> Bool {
+        switch kind {
+        case .spouse:
+            return person.spouse?.persistentModelID == relative.persistentModelID
+                || relative.spouse?.persistentModelID == person.persistentModelID
+        case .parent:
+            return person.parents.contains { $0.persistentModelID == relative.persistentModelID }
+                || relative.children.contains { $0.persistentModelID == person.persistentModelID }
+        case .child:
+            return person.children.contains { $0.persistentModelID == relative.persistentModelID }
+                || relative.parents.contains { $0.persistentModelID == person.persistentModelID }
+        }
+    }
+
+    /// UIから利用する共通解除API。人物や他のrelationshipは削除しない。
+    @discardableResult
+    static func unlink(
+        _ kind: RelationshipKind,
+        person: Person,
+        relative: Person
+    ) throws -> Bool {
+        guard isLinked(kind, person: person, relative: relative) else {
+            throw RelationshipLinkError.relationshipNotFound
+        }
+        switch kind {
+        case .spouse:
+            return removeSpouse(person, relative)
+        case .parent:
+            return removeParentChild(parent: relative, child: person)
+        case .child:
+            return removeParentChild(parent: person, child: relative)
+        }
+    }
+
+    /// 旧relationshipを除いた仮想状態で、新しい人物へ安全に付け替えられるか判定する。
+    static func canReplace(
+        _ kind: RelationshipKind,
+        person: Person,
+        oldRelative: Person,
+        newRelative: Person
+    ) -> Bool {
+        guard isLinked(kind, person: person, relative: oldRelative),
+              !isSamePerson(person, newRelative),
+              !isSamePerson(oldRelative, newRelative)
+        else { return false }
+
+        switch kind {
+        case .spouse:
+            guard newRelative.spouse == nil else { return false }
+            return !hasLinealRelationship(person, newRelative)
+
+        case .parent:
+            guard !hasSpouseRelationship(person, newRelative) else { return false }
+            let oldID = oldRelative.persistentModelID
+            var resultingParentIDs = Set(
+                person.parents
+                    .filter { $0.persistentModelID != oldID }
+                    .map(\.persistentModelID)
+            )
+            guard resultingParentIDs.insert(newRelative.persistentModelID).inserted,
+                  resultingParentIDs.count <= 2
+            else { return false }
+            return !wouldCreateAncestryCycle(
+                parent: newRelative,
+                child: person,
+                excludingParentChild: (oldID, person.persistentModelID)
+            )
+
+        case .child:
+            guard !hasSpouseRelationship(person, newRelative) else { return false }
+            let oldID = oldRelative.persistentModelID
+            let remainingChildIDs = Set(
+                person.children
+                    .filter { $0.persistentModelID != oldID }
+                    .map(\.persistentModelID)
+            )
+            guard !remainingChildIDs.contains(newRelative.persistentModelID),
+                  !newRelative.parents.contains(where: {
+                      $0.persistentModelID == person.persistentModelID
+                  }),
+                  newRelative.parents.count < 2
+            else { return false }
+            return !wouldCreateAncestryCycle(
+                parent: person,
+                child: newRelative,
+                excludingParentChild: (person.persistentModelID, oldID)
+            )
+        }
+    }
+
+    private static func replacementError(
+        _ kind: RelationshipKind,
+        person: Person,
+        oldRelative: Person,
+        newRelative: Person
+    ) -> RelationshipLinkError {
+        guard isLinked(kind, person: person, relative: oldRelative) else {
+            return .relationshipNotFound
+        }
+        if isSamePerson(person, newRelative) { return .selfRelation }
+        if isSamePerson(oldRelative, newRelative) { return .alreadyLinked }
+
+        switch kind {
+        case .spouse:
+            if hasLinealRelationship(person, newRelative) { return .incompatibleRelationship }
+            return newRelative.spouse == nil ? .alreadyLinked : .spouseUnavailable
+        case .parent:
+            if hasSpouseRelationship(person, newRelative) { return .incompatibleRelationship }
+            let oldID = oldRelative.persistentModelID
+            if wouldCreateAncestryCycle(
+                parent: newRelative,
+                child: person,
+                excludingParentChild: (oldID, person.persistentModelID)
+            ) {
+                return .invalidFamilyCycle
+            }
+            return .parentLimit
+        case .child:
+            if hasSpouseRelationship(person, newRelative) { return .incompatibleRelationship }
+            let oldID = oldRelative.persistentModelID
+            if wouldCreateAncestryCycle(
+                parent: person,
+                child: newRelative,
+                excludingParentChild: (person.persistentModelID, oldID)
+            ) {
+                return .invalidFamilyCycle
+            }
+            return newRelative.parents.count >= 2 ? .parentLimit : .alreadyLinked
+        }
+    }
+
+    /// validation後に旧関係を外して新関係を追加する。途中失敗時は旧関係へ戻す。
+    /// 永続化まで含むatomicityはRelationshipTransactionと組み合わせて保証する。
+    @discardableResult
+    static func replace(
+        _ kind: RelationshipKind,
+        person: Person,
+        oldRelative: Person,
+        newRelative: Person
+    ) throws -> Bool {
+        guard canReplace(
+            kind,
+            person: person,
+            oldRelative: oldRelative,
+            newRelative: newRelative
+        ) else {
+            throw replacementError(
+                kind,
+                person: person,
+                oldRelative: oldRelative,
+                newRelative: newRelative
+            )
+        }
+
+        switch kind {
+        case .spouse:
+            _ = removeSpouse(person, oldRelative)
+            guard setSpouse(person, newRelative) else {
+                _ = setSpouse(person, oldRelative)
+                throw RelationshipLinkError.incompatibleRelationship
+            }
+        case .parent:
+            _ = removeParentChild(parent: oldRelative, child: person)
+            guard addParentChild(parent: newRelative, child: person) else {
+                _ = addParentChild(parent: oldRelative, child: person)
+                throw RelationshipLinkError.incompatibleRelationship
+            }
+        case .child:
+            _ = removeParentChild(parent: person, child: oldRelative)
+            guard addParentChild(parent: person, child: newRelative) else {
+                _ = addParentChild(parent: person, child: oldRelative)
+                throw RelationshipLinkError.incompatibleRelationship
+            }
+        }
+        return true
+    }
+
     /// 後から配偶者を追加した際、共同子にできる既存子だけを返す。
     static func sharedChildCandidates(of person: Person, with spouse: Person) -> [Person] {
         person.children.filter { child in
@@ -445,19 +680,33 @@ enum RelationshipManager {
     }
 
     /// 親子関係を解消する
-    static func removeParentChild(parent: Person, child: Person) {
+    @discardableResult
+    static func removeParentChild(parent: Person, child: Person) -> Bool {
+        let hadChild = parent.children.contains {
+            $0.persistentModelID == child.persistentModelID
+        }
+        let hadParent = child.parents.contains {
+            $0.persistentModelID == parent.persistentModelID
+        }
         parent.children.removeAll { $0.persistentModelID == child.persistentModelID }
         child.parents.removeAll { $0.persistentModelID == parent.persistentModelID }
+        return hadChild || hadParent
     }
 
     /// personに関わるすべての関係(配偶者・親・子)を解消する。人物削除の前に呼ぶ。
     static func detachAll(_ person: Person) {
-        removeSpouse(of: person)
-        for parent in person.parents {
-            removeParentChild(parent: parent, child: person)
+        _ = removeSpouse(of: person)
+        for parent in Array(person.parents) {
+            _ = removeParentChild(parent: parent, child: person)
         }
-        for child in person.children {
-            removeParentChild(parent: person, child: child)
+        for child in Array(person.children) {
+            _ = removeParentChild(parent: person, child: child)
         }
+    }
+
+    /// Person削除時の唯一の安全な入口。逆参照を外してからcontextへ削除を登録する。
+    static func delete(_ person: Person, from context: ModelContext) {
+        detachAll(person)
+        context.delete(person)
     }
 }

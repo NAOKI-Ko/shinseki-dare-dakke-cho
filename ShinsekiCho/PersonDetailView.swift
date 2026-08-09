@@ -29,6 +29,7 @@ struct PersonDetailView: View {
     @State private var showingRelationEditor = false
     @State private var mapSelectedPerson: Person?
     @State private var showingPurchaseSheet = false
+    @State private var graphRevision = UUID()
 
     var body: some View {
         List {
@@ -149,6 +150,7 @@ struct PersonDetailView: View {
                         resetButtonIdentifier: "connectionMap.detail.resetButton",
                         onShowDetail: { mapSelectedPerson = $0 }
                     )
+                        .id(graphRevision)
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(AppTheme.paperRaised)
                 } else {
@@ -212,7 +214,9 @@ struct PersonDetailView: View {
             PersonFormView(personToEdit: person)
         }
         .sheet(isPresented: $showingRelationEditor) {
-            RelationEditorView(person: person)
+            RelationEditorView(person: person) {
+                graphRevision = UUID()
+            }
         }
         .sheet(isPresented: $showingPurchaseSheet) {
             PurchaseSheet()
@@ -267,6 +271,7 @@ struct RelationEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(TrialManager.self) private var trialManager
     @Bindable var person: Person
+    var onRelationshipChange: () -> Void = {}
 
     @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
     private var allPersons: [Person]
@@ -274,6 +279,8 @@ struct RelationEditorView: View {
     @State private var showingPurchaseSheet = false
     @State private var pendingChildCandidate: Person?
     @State private var sharedChildPrompt: SharedChildPrompt?
+    @State private var pendingUnlink: RelationshipCorrectionRequest?
+    @State private var replacementRequest: RelationshipCorrectionRequest?
     @State private var errorMessage: String?
 
     private var candidates: [Person] {
@@ -285,15 +292,7 @@ struct RelationEditorView: View {
             List {
                 Section("配偶者") {
                     if let spouse = person.spouse {
-                        HStack {
-                            Text(spouse.name)
-                            Spacer()
-                            Button("解除") {
-                                performEdit { RelationshipManager.removeSpouse(of: person) }
-                            }
-                                .font(.caption)
-                                .foregroundStyle(AppTheme.attention)
-                        }
+                        relationshipRow(kind: .spouse, relative: spouse)
                     } else {
                         Menu("配偶者を選ぶ") {
                             ForEach(candidates.filter {
@@ -328,17 +327,7 @@ struct RelationEditorView: View {
 
                 Section("親") {
                     ForEach(person.parents) { parent in
-                        HStack {
-                            Text(parent.name)
-                            Spacer()
-                            Button("解除") {
-                                performEdit {
-                                    RelationshipManager.removeParentChild(parent: parent, child: person)
-                                }
-                            }
-                                .font(.caption)
-                                .foregroundStyle(AppTheme.attention)
-                        }
+                        relationshipRow(kind: .parent, relative: parent)
                     }
                     if person.parents.count < 2 {
                         Menu("親を追加") {
@@ -362,17 +351,7 @@ struct RelationEditorView: View {
 
                 Section("子") {
                     ForEach(person.children) { child in
-                        HStack {
-                            Text(child.name)
-                            Spacer()
-                            Button("解除") {
-                                performEdit {
-                                    RelationshipManager.removeParentChild(parent: person, child: child)
-                                }
-                            }
-                                .font(.caption)
-                                .foregroundStyle(AppTheme.attention)
-                        }
+                        relationshipRow(kind: .child, relative: child)
                     }
                     Menu("子を追加") {
                         ForEach(candidates.filter {
@@ -418,6 +397,38 @@ struct RelationEditorView: View {
                     }
                 }
             }
+            .sheet(item: $replacementRequest) { request in
+                RelationshipReplacementSheet(
+                    request: request,
+                    candidates: candidates.filter {
+                        RelationshipManager.canReplace(
+                            request.kind,
+                            person: request.person,
+                            oldRelative: request.relative,
+                            newRelative: $0
+                        )
+                    }
+                ) { replacement in
+                    replaceRelationship(request, with: replacement)
+                }
+            }
+            .alert(
+                "関係を解除",
+                isPresented: Binding(
+                    get: { pendingUnlink != nil },
+                    set: { if !$0 { pendingUnlink = nil } }
+                ),
+                presenting: pendingUnlink
+            ) { request in
+                Button("関係を解除", role: .destructive) {
+                    unlinkRelationship(request)
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: { request in
+                Text(
+                    "\(request.relative.name)さんとの「\(request.kind.displayName)」の関係を解除しますか？人物そのものは削除されません。"
+                )
+            }
             .confirmationDialog(
                 "子として追加",
                 isPresented: Binding(
@@ -442,6 +453,75 @@ struct RelationEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private func relationshipRow(kind: RelationshipKind, relative: Person) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text(kind.displayName)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.inkSoft)
+                Text(relative.name)
+                    .foregroundStyle(AppTheme.ink)
+                Spacer()
+            }
+            HStack(spacing: 16) {
+                Spacer()
+                Button("関係を変更") {
+                    replacementRequest = RelationshipCorrectionRequest(
+                        kind: kind,
+                        person: person,
+                        relative: relative
+                    )
+                }
+                .font(.caption)
+                .foregroundStyle(AppTheme.ai)
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier(
+                    "relationship.change.\(kind.rawValue).\(relative.name)"
+                )
+
+                Button("関係を解除", role: .destructive) {
+                    pendingUnlink = RelationshipCorrectionRequest(
+                        kind: kind,
+                        person: person,
+                        relative: relative
+                    )
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier(
+                    "relationship.unlink.\(kind.rawValue).\(relative.name)"
+                )
+            }
+        }
+    }
+
+    private func unlinkRelationship(_ request: RelationshipCorrectionRequest) {
+        pendingUnlink = nil
+        performEdit {
+            try RelationshipManager.unlink(
+                request.kind,
+                person: request.person,
+                relative: request.relative
+            )
+        }
+    }
+
+    private func replaceRelationship(
+        _ request: RelationshipCorrectionRequest,
+        with replacement: Person
+    ) {
+        replacementRequest = nil
+        performEdit {
+            try RelationshipManager.replace(
+                request.kind,
+                person: request.person,
+                oldRelative: request.relative,
+                newRelative: replacement
+            )
+        }
+    }
+
     private func linkChild(_ child: Person, includeSpouse: Bool) {
         pendingChildCandidate = nil
         performEdit {
@@ -462,6 +542,7 @@ struct RelationEditorView: View {
             do {
                 try RelationshipTransaction.perform(in: context, action)
                 errorMessage = nil
+                onRelationshipChange()
                 onSuccess()
             } catch {
                 errorMessage = error.localizedDescription
@@ -469,6 +550,100 @@ struct RelationEditorView: View {
         } else {
             showingPurchaseSheet = true
         }
+    }
+}
+
+struct RelationshipCorrectionRequest: Identifiable {
+    let id = UUID()
+    let kind: RelationshipKind
+    let person: Person
+    let relative: Person
+}
+
+extension RelationshipKind {
+    var displayName: String {
+        switch self {
+        case .spouse: "配偶者"
+        case .parent: "親"
+        case .child: "子"
+        }
+    }
+}
+
+struct RelationshipReplacementSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let request: RelationshipCorrectionRequest
+    let candidates: [Person]
+    let onReplace: (Person) -> Void
+
+    @State private var searchText = ""
+
+    private var filteredCandidates: [Person] {
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return candidates }
+        return candidates.filter {
+            $0.name.localizedCaseInsensitiveContains(keyword)
+                || $0.kana.localizedCaseInsensitiveContains(keyword)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("現在の\(request.kind.displayName)") {
+                    Text(request.relative.name)
+                        .foregroundStyle(AppTheme.ink)
+                }
+                .listRowBackground(AppTheme.paperRaised)
+
+                Section {
+                    if filteredCandidates.isEmpty {
+                        Text("変更できる登録済み人物がいません。")
+                            .font(.footnote)
+                            .foregroundStyle(AppTheme.inkSoft)
+                    } else {
+                        ForEach(filteredCandidates) { candidate in
+                            Button {
+                                onReplace(candidate)
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    Text(candidate.name)
+                                        .foregroundStyle(AppTheme.ink)
+                                    Spacer()
+                                    Image(systemName: "arrow.right.circle")
+                                        .foregroundStyle(AppTheme.ai)
+                                }
+                            }
+                            .accessibilityIdentifier(
+                                "relationship.replacement.\(candidate.name)"
+                            )
+                        }
+                    }
+                } header: {
+                    Text("変更先")
+                } footer: {
+                    if request.kind == .spouse {
+                        Text("配偶者を変更しても、既存の子の親子関係は自動では変更されません。")
+                    } else {
+                        Text("人物そのものは削除されず、この関係だけが付け替えられます。")
+                    }
+                }
+                .listRowBackground(AppTheme.paperRaised)
+            }
+            .searchable(text: $searchText, prompt: "名前で検索")
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.paper)
+            .navigationTitle("\(request.kind.displayName)を変更")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(AppTheme.paper)
     }
 }
 

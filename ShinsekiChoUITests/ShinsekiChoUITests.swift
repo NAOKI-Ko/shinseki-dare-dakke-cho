@@ -908,6 +908,60 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(app.navigationBars["山田 太郎さんの関係"].waitForExistence(timeout: 5))
   }
 
+  func testRelationshipCorrectionReplacesAndUnlinksParentWithoutDeletingPeople() {
+    let app = launch(seed: true)
+    showList(in: app)
+    let selfCell = element("person.cell.山田 太郎", in: app)
+    XCTAssertTrue(selfCell.waitForExistence(timeout: 5))
+    selfCell.tap()
+
+    let relationButton = app.buttons["personDetail.editRelations"]
+    XCTAssertTrue(relationButton.waitForExistence(timeout: 5))
+    relationButton.tap()
+    XCTAssertTrue(app.navigationBars["山田 太郎さんの関係"].waitForExistence(timeout: 5))
+
+    let changeFather = element("relationship.change.parent.山田 一郎", in: app)
+    reveal(changeFather, in: app)
+    XCTAssertTrue(changeFather.waitForExistence(timeout: 5))
+    changeFather.tap()
+
+    XCTAssertTrue(app.navigationBars["親を変更"].waitForExistence(timeout: 5))
+    let replacement = element("relationship.replacement.佐藤 修一", in: app)
+    reveal(replacement, in: app)
+    XCTAssertTrue(replacement.waitForExistence(timeout: 5))
+    replacement.tap()
+
+    let unlinkReplacement = element("relationship.unlink.parent.佐藤 修一", in: app)
+    reveal(unlinkReplacement, in: app)
+    XCTAssertTrue(unlinkReplacement.waitForExistence(timeout: 5))
+    XCTAssertFalse(element("relationship.change.parent.山田 一郎", in: app).exists)
+    unlinkReplacement.tap()
+
+    let alert = app.alerts["関係を解除"]
+    XCTAssertTrue(alert.waitForExistence(timeout: 5))
+    XCTAssertTrue(
+      alert.staticTexts["佐藤 修一さんとの「親」の関係を解除しますか？人物そのものは削除されません。"].exists
+    )
+    alert.buttons["関係を解除"].tap()
+    XCTAssertFalse(unlinkReplacement.waitForExistence(timeout: 2))
+
+    app.buttons["完了"].tap()
+    let canvas = element("connectionMap.canvas", in: app)
+    reveal(canvas, in: app, maxSwipes: 10)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+    XCTAssertFalse(element("connectionMap.node.山田 一郎", in: app).exists)
+    XCTAssertFalse(element("connectionMap.node.佐藤 修一", in: app).exists)
+    XCTAssertTrue(element("connectionMap.node.山田 花子", in: app).exists)
+
+    app.navigationBars["山田 太郎"].buttons.firstMatch.tap()
+    let fatherCell = element("person.cell.山田 一郎", in: app)
+    reveal(fatherCell, in: app, maxSwipes: 12)
+    XCTAssertTrue(fatherCell.waitForExistence(timeout: 5))
+    let replacementCell = element("person.cell.佐藤 修一", in: app)
+    reveal(replacementCell, in: app, maxSwipes: 12)
+    XCTAssertTrue(replacementCell.waitForExistence(timeout: 5))
+  }
+
   func testPersonDetailSectionsTopToBottomScreenshots() {
     let app = launch(seed: true)
     showList(in: app)
