@@ -1,4 +1,5 @@
 import SwiftData
+import UIKit
 import XCTest
 
 @testable import ShinsekiCho
@@ -108,6 +109,136 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertEqual(dPositionBefore?.0, dPositionAfter?.0)
     XCTAssertEqual(dPositionBefore?.1, dPositionAfter?.1)
     XCTAssertEqual(store.nodes[key(fixture.d)]?.path, [.child])
+  }
+
+  func testFamilyGraphPhotoCacheDecodesUnchangedPhotoOnlyOnce() throws {
+    let fixture = try makeFixture()
+    var decodeCount = 0
+    let cache = FamilyGraphPhotoCache { _, _ in
+      decodeCount += 1
+      return UIImage()
+    }
+    let data = Data([0x01, 0x02, 0x03])
+
+    for _ in 0..<300 {
+      _ = cache.image(for: key(fixture.a), photoData: data)
+    }
+
+    XCTAssertEqual(decodeCount, 1)
+  }
+
+  func testFamilyGraphPhotoCacheInvalidatesChangedAndDeletedPhoto() throws {
+    let fixture = try makeFixture()
+    var decodeCount = 0
+    let cache = FamilyGraphPhotoCache { _, _ in
+      decodeCount += 1
+      return UIImage()
+    }
+    let first = Data([0x01, 0x02])
+    let second = Data([0x03, 0x04])
+
+    XCTAssertNotNil(cache.image(for: key(fixture.a), photoData: first))
+    XCTAssertNotNil(cache.image(for: key(fixture.a), photoData: second))
+    XCTAssertEqual(decodeCount, 2)
+
+    XCTAssertNil(cache.image(for: key(fixture.a), photoData: nil))
+    XCTAssertNotNil(cache.image(for: key(fixture.a), photoData: first))
+    XCTAssertEqual(decodeCount, 3)
+  }
+
+  func testFamilyGraphPhotoCacheAlsoCachesDecodeFailure() throws {
+    let fixture = try makeFixture()
+    var decodeCount = 0
+    let cache = FamilyGraphPhotoCache { _, _ in
+      decodeCount += 1
+      return nil
+    }
+    let brokenData = Data([0x00, 0x01, 0x02])
+
+    for _ in 0..<100 {
+      XCTAssertNil(cache.image(for: key(fixture.b), photoData: brokenData))
+    }
+
+    XCTAssertEqual(decodeCount, 1)
+  }
+
+  func testRenderSnapshotRefreshesOnlyFromCurrentGraphStructure() throws {
+    let fixture = try makeFixture()
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.a)
+
+    XCTAssertEqual(store.renderSnapshot.nodes.map(\.id), [key(fixture.a)])
+    XCTAssertTrue(store.renderSnapshot.edges.isEmpty)
+
+    store.expand(fixture.a)
+    XCTAssertEqual(store.renderSnapshot.nodes.count, store.nodes.count)
+    XCTAssertEqual(store.renderSnapshot.edges.count, store.edges.count)
+    XCTAssertEqual(
+      store.renderSnapshot.nodes.first(where: { $0.id == key(fixture.d) })?.relationLabel,
+      "子"
+    )
+
+    RelationshipManager.addParentChild(parent: fixture.c, child: fixture.d)
+    store.expand(fixture.a)
+    let coupleModel = store.renderSnapshot.coupleRenderModel
+    let knot = try XCTUnwrap(coupleModel.knots.first)
+    XCTAssertEqual(store.renderSnapshot.knotsByID[knot.id], knot)
+    XCTAssertTrue(
+      store.renderSnapshot.edges.allSatisfy {
+        !coupleModel.suppressedEdgeIDs.contains($0.id)
+      }
+    )
+  }
+
+  func testViewportCullingKeepsVisibleAndCrossingContent() {
+    let viewport = CGSize(width: 400, height: 600)
+
+    XCTAssertTrue(
+      GraphViewportCulling.isNodeVisible(
+        center: CGPoint(x: 200, y: 300),
+        radius: 40,
+        viewportSize: viewport
+      )
+    )
+    XCTAssertFalse(
+      GraphViewportCulling.isNodeVisible(
+        center: CGPoint(x: -260, y: 300),
+        radius: 40,
+        viewportSize: viewport
+      )
+    )
+    XCTAssertTrue(
+      GraphViewportCulling.isEdgeVisible(
+        start: CGPoint(x: -500, y: 300),
+        end: CGPoint(x: 900, y: 300),
+        viewportSize: viewport
+      )
+    )
+    XCTAssertFalse(
+      GraphViewportCulling.isEdgeVisible(
+        start: CGPoint(x: -500, y: -500),
+        end: CGPoint(x: -300, y: -300),
+        viewportSize: viewport
+      )
+    )
+  }
+
+  func testViewportCullingReducesFiftyOffscreenNodesDeterministically() {
+    let viewport = CGSize(width: 400, height: 600)
+    let centers = (0..<50).map { index in
+      CGPoint(x: -2450 + CGFloat(index * 100), y: 300)
+    }
+
+    let visibleCount = centers.filter {
+      GraphViewportCulling.isNodeVisible(
+        center: $0,
+        radius: 50,
+        viewportSize: viewport
+      )
+    }.count
+
+    XCTAssertEqual(visibleCount, 8)
+    XCTAssertLessThan(visibleCount, centers.count)
   }
 
   func testPreviouslyPlacedNodeLevelsAndSlotsNeverChange() throws {

@@ -556,6 +556,9 @@ final class ShinsekiChoUITests: XCTestCase {
     keepScreenshot(app, name: "Home_つながり_長押しメニュー_ライト")
 
     app.buttons["子を追加"].tap()
+    let newPersonMode = app.buttons["新しい人物"]
+    XCTAssertTrue(newPersonMode.waitForExistence(timeout: 3))
+    newPersonMode.tap()
     let nameField = element("quickRelative.name", in: app)
     XCTAssertTrue(nameField.waitForExistence(timeout: 3))
     nameField.typeText("法事で会った 光")
@@ -777,6 +780,18 @@ final class ShinsekiChoUITests: XCTestCase {
     spouseFather.tap()
     let spouseBrother = element("connectionMap.node.佐藤 健太", in: app)
     XCTAssertTrue(spouseBrother.waitForExistence(timeout: 5))
+    for _ in 0..<12 where !spouseBrother.isHittable {
+      let nodeIsLeftOfCanvas = spouseBrother.frame.midX < canvas.frame.midX
+      let startX = nodeIsLeftOfCanvas ? 0.45 : 0.55
+      canvas.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: 0.55))
+        .press(
+          forDuration: 0.05,
+          thenDragTo: canvas.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.50, dy: 0.55)
+          )
+        )
+    }
+    XCTAssertTrue(spouseBrother.isHittable)
     spouseBrother.tap()
     XCTAssertTrue(element("connectionMap.node.佐藤 蓮", in: app).waitForExistence(timeout: 5))
     canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.55))
@@ -831,14 +846,15 @@ final class ShinsekiChoUITests: XCTestCase {
       let childAction = app.buttons["connectionMap.menu.child"]
       XCTAssertTrue(childAction.waitForExistence(timeout: 3))
       childAction.tap()
+      let newPersonMode = app.buttons["新しい人物"]
+      XCTAssertTrue(newPersonMode.waitForExistence(timeout: 3))
+      newPersonMode.tap()
       let field = element("quickRelative.name", in: app)
       XCTAssertTrue(field.waitForExistence(timeout: 3))
       let name = "共同の子 \(number)"
       field.typeText(name)
       app.buttons["quickRelative.save"].tap()
-      XCTAssertTrue(
-        element("connectionMap.node.\(name)", in: app).waitForExistence(timeout: 5)
-      )
+      XCTAssertTrue(father.waitForExistence(timeout: 5))
     }
 
     for number in 1...12 {
@@ -851,8 +867,6 @@ final class ShinsekiChoUITests: XCTestCase {
     let spouseFather = element("connectionMap.node.佐藤 修一", in: app)
     XCTAssertTrue(spouseFather.waitForExistence(timeout: 5))
     spouseFather.tap()
-    let spouseBrother = element("connectionMap.node.佐藤 健太", in: app)
-    XCTAssertTrue(spouseBrother.waitForExistence(timeout: 5))
 
     app.buttons["connectionMap.resetButton"].tap()
     canvas.pinch(withScale: 0.4, velocity: -1)

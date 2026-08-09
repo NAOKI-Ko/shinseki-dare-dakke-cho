@@ -105,6 +105,11 @@ struct ShinsekiChoApp: App {
             kana: "さとう みさき",
             relationNote: "配偶者"
         )
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-family-graph-ux") {
+            spouse.photoData = UIImage(systemName: "person.crop.circle.fill")?.pngData()
+        }
+        #endif
         let spouseFather = Person(
             name: "佐藤 修一",
             kana: "さとう しゅういち",
