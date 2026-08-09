@@ -5,7 +5,10 @@ struct ContentView: View {
     @Environment(TrialManager.self) private var trialManager
     @Environment(\.scenePhase) private var scenePhase
     @Query(filter: #Predicate<Person> { $0.isSelf }) private var selfPersonQuery: [Person]
-    @AppStorage("onboarding.guidePending") private var isContinuingOnboarding = false
+    @AppStorage(OnboardingStorageKeys.hasStarted) private var onboardingHasStarted = false
+    @AppStorage(OnboardingStorageKeys.hasCompleted) private var onboardingHasCompleted = false
+    @AppStorage(OnboardingStorageKeys.legacyGuidePending) private var legacyGuidePending = false
+    @State private var onboardingReplayRequested = false
 
     init() {
         let appearance = UITabBarAppearance()
@@ -25,36 +28,61 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if selfPersonQuery.isEmpty || isContinuingOnboarding {
-                // 「自分」が未登録なら、まずオンボーディングを通す。
-                // 登録直後は使い方説明まで同じフロー内に留まり、完了または
-                // スキップ後にselfPersonQueryの通常画面へ切り替える。
+            if shouldPresentOnboarding {
                 OnboardingFlowView(
-                    startAtGuide: !selfPersonQuery.isEmpty,
-                    onRegistrationComplete: {
-                        isContinuingOnboarding = true
-                    },
-                    onComplete: {
-                        isContinuingOnboarding = false
-                    }
+                    existingSelf: selfPersonQuery.first,
+                    onComplete: finishOnboarding,
+                    onSkip: finishOnboarding
                 )
+                .onAppear { onboardingHasStarted = true }
             } else {
                 TabView {
-                    HomeView()
+                    HomeView(onStartOnboarding: requestOnboardingReplay)
                         .tabItem { Label("親戚", systemImage: "person.2") }
 
                     GatheringListView()
                         .tabItem { Label("集まり", systemImage: "person.3.sequence") }
 
-                    SettingsView()
+                    SettingsView(onReplayOnboarding: requestOnboardingReplay)
                         .tabItem { Label("設定", systemImage: "gearshape") }
                 }
             }
         }
+        .onAppear(perform: migrateLegacyOnboardingStateIfNeeded)
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             Task { await trialManager.refreshEntitlement() }
         }
+    }
+
+    private var shouldPresentOnboarding: Bool {
+        if legacyGuidePending { return true }
+        return OnboardingProgress(
+            hasStarted: onboardingHasStarted,
+            hasCompleted: onboardingHasCompleted,
+            isReplayRequested: onboardingReplayRequested
+        ).shouldPresent(hasRegisteredSelf: !selfPersonQuery.isEmpty)
+    }
+
+    private func requestOnboardingReplay() {
+        onboardingReplayRequested = true
+    }
+
+    private func finishOnboarding() {
+        onboardingHasStarted = true
+        onboardingHasCompleted = true
+        onboardingReplayRequested = false
+        legacyGuidePending = false
+    }
+
+    private func migrateLegacyOnboardingStateIfNeeded() {
+        guard !onboardingHasStarted,
+              !onboardingHasCompleted,
+              !legacyGuidePending,
+              !selfPersonQuery.isEmpty
+        else { return }
+        // 旧版でオンボーディングを完了している既存利用者を完了扱いにする。
+        onboardingHasCompleted = true
     }
 }
 

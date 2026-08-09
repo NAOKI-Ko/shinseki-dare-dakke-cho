@@ -9,6 +9,7 @@ struct PersonListView: View {
     private var selfPeople: [Person]
 
     @Binding var searchText: String
+    var onRegisterSelf: () -> Void = {}
 
     private let columns = [GridItem(.adaptive(minimum: 92), spacing: 14)]
 
@@ -34,14 +35,18 @@ struct PersonListView: View {
                     Image(systemName: "person.badge.plus")
                         .font(.system(size: 40))
                         .foregroundStyle(AppTheme.ai.opacity(0.5))
-                    Text("まだ登録がありません")
+                    Text("まず自分を登録しましょう")
                         .font(.minchoTitle(18, relativeTo: .title3))
                         .foregroundStyle(AppTheme.ink)
-                    Text("右上の＋から、法事や帰省で会う親戚を登録してください。顔写真を添えると、あとで探しやすくなります。")
+                    Text("自分を登録すると、親戚のつながりを記録し始められます。")
                         .font(.subheadline)
                         .foregroundStyle(AppTheme.inkSoft)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
+                    Button("自分を登録する", action: onRegisterSelf)
+                        .buttonStyle(.borderedProminent)
+                        .tint(AppTheme.ai)
+                        .accessibilityIdentifier("person.empty.startOnboarding")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(AppTheme.paper)

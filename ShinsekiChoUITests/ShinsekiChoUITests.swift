@@ -92,33 +92,31 @@ final class ShinsekiChoUITests: XCTestCase {
     mapSegment.tap()
   }
 
-  func testOnboardingValidationTransitionAndRelaunchPersistence() {
-    var app = launch()
-    let nameField = app.textFields["onboarding.nameField"]
-    let startButton = app.buttons["onboarding.startButton"]
+  func testFirstLaunchShowsReleaseOnboarding() {
+    let app = launch()
 
-    XCTAssertTrue(nameField.waitForExistence(timeout: 5))
+    XCTAssertTrue(element("onboarding.welcome", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["onboarding.welcome.next"].exists)
+    XCTAssertTrue(app.buttons["onboarding.skip"].exists)
     XCTAssertFalse(app.buttons["親戚"].exists)
-    XCTAssertFalse(startButton.isEnabled)
-    let onboardingScreenshot = XCTAttachment(screenshot: app.screenshot())
-    onboardingScreenshot.name = "オンボーディング_ライト"
-    onboardingScreenshot.lifetime = .keepAlways
-    add(onboardingScreenshot)
+  }
 
+  func testOnboardingCompletionAndRelaunchPersistence() {
+    var app = launch()
+    XCTAssertTrue(element("onboarding.welcome", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(app.buttons["親戚"].exists)
+    app.buttons["onboarding.welcome.next"].tap()
+    let nameField = app.textFields["onboarding.self.name"]
+    XCTAssertTrue(nameField.waitForExistence(timeout: 5))
     nameField.tap()
     nameField.typeText("UIテスト 太郎")
-    XCTAssertTrue(startButton.isEnabled)
-    startButton.tap()
-
-    let firstGuidePage = element("onboarding.guide.page1", in: app)
-    XCTAssertTrue(firstGuidePage.waitForExistence(timeout: 5))
-    XCTAssertTrue(app.buttons["onboarding.guide.skipButton"].exists)
-    XCTAssertFalse(app.buttons["親戚"].exists)
-
-    app.buttons["onboarding.guide.nextButton"].tap()
-    let secondGuidePage = element("onboarding.guide.page2", in: app)
-    XCTAssertTrue(secondGuidePage.waitForExistence(timeout: 5))
-    let completeButton = app.buttons["onboarding.guide.completeButton"]
+    app.buttons["onboarding.self.next"].tap()
+    XCTAssertTrue(element("onboarding.family", in: app).waitForExistence(timeout: 5))
+    app.buttons["onboarding.family.next"].tap()
+    XCTAssertTrue(element("onboarding.grandparents", in: app).waitForExistence(timeout: 5))
+    app.buttons["onboarding.grandparents.later"].tap()
+    XCTAssertTrue(element("onboarding.finish", in: app).waitForExistence(timeout: 5))
+    let completeButton = app.buttons["onboarding.finish.complete"]
     XCTAssertTrue(completeButton.waitForExistence(timeout: 5))
     completeButton.tap()
 
@@ -128,35 +126,41 @@ final class ShinsekiChoUITests: XCTestCase {
 
     app = launch(reset: false)
     XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
-    XCTAssertFalse(app.textFields["onboarding.nameField"].exists)
+    XCTAssertFalse(element("onboarding.welcome", in: app).exists)
     app.buttons["設定"].tap()
     let selfName = element("settings.selfName", in: app)
     XCTAssertTrue(selfName.waitForExistence(timeout: 5))
     XCTAssertTrue(selfName.label.contains("UIテスト 太郎"))
   }
 
-  func testOnboardingGuideSkipTransitionsToTabs() {
+  func testOnboardingSkipTransitionsToTabsAndDoesNotReappear() {
     var app = launch()
-    let nameField = app.textFields["onboarding.nameField"]
-    XCTAssertTrue(nameField.waitForExistence(timeout: 5))
-
-    nameField.tap()
-    nameField.typeText("スキップ 太郎")
-    app.buttons["onboarding.startButton"].tap()
-
-    let skipButton = app.buttons["onboarding.guide.skipButton"]
+    let skipButton = app.buttons["onboarding.skip"]
     XCTAssertTrue(skipButton.waitForExistence(timeout: 5))
-    XCTAssertFalse(app.buttons["親戚"].exists)
+    skipButton.tap()
+    XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
+    XCTAssertTrue(element("home.empty.startOnboarding", in: app).waitForExistence(timeout: 5))
 
-    // 名前は保存済みでも、説明を終えていなければ次回起動で案内を再開する。
     app.terminate()
     app = launch(reset: false)
-    let resumedSkipButton = app.buttons["onboarding.guide.skipButton"]
-    XCTAssertTrue(resumedSkipButton.waitForExistence(timeout: 5))
-    resumedSkipButton.tap()
-
     XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
-    XCTAssertFalse(app.buttons["onboarding.guide.skipButton"].exists)
+    XCTAssertFalse(element("onboarding.welcome", in: app).exists)
+  }
+
+  func testSettingsCanReplayOnboarding() {
+    let app = launch(seed: true)
+    XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
+    app.buttons["設定"].tap()
+
+    let replay = app.buttons["settings.onboarding.replay"]
+    reveal(replay, in: app)
+    XCTAssertTrue(replay.isHittable)
+    replay.tap()
+
+    XCTAssertTrue(element("onboarding.welcome", in: app).waitForExistence(timeout: 5))
+    XCTAssertEqual(app.staticTexts["1 / 5"].label, "1 / 5")
+    app.buttons["onboarding.skip"].tap()
+    XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
   }
 
   func testSeededGraphExpansionGesturesResetGatheringPhotoAndPersistence() {
@@ -421,8 +425,12 @@ final class ShinsekiChoUITests: XCTestCase {
     let contactHeader = element("personDetail.contactHeader", in: app)
     XCTAssertTrue(contactHeader.waitForExistence(timeout: 5))
     let phoneLink = element("personDetail.phoneLink", in: app)
+    revealInPersonDetail(phoneLink, in: app)
+    XCTAssertTrue(phoneLink.waitForExistence(timeout: 5))
     XCTAssertEqual(phoneLink.value as? String, "tel://0312345678")
     let emailLink = element("personDetail.emailLink", in: app)
+    revealInPersonDetail(emailLink, in: app)
+    XCTAssertTrue(emailLink.waitForExistence(timeout: 5))
     XCTAssertTrue((emailLink.value as? String)?.contains("mailto:") == true)
 
     let birthday = element("personDetail.birthday", in: app)
@@ -462,8 +470,11 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(persistedCell.waitForExistence(timeout: 5))
     persistedCell.tap()
     XCTAssertTrue(element("personDetail.contactHeader", in: app).waitForExistence(timeout: 5))
+    let persistedPhoneLink = element("personDetail.phoneLink", in: app)
+    revealInPersonDetail(persistedPhoneLink, in: app)
+    XCTAssertTrue(persistedPhoneLink.waitForExistence(timeout: 5))
     XCTAssertEqual(
-      element("personDetail.phoneLink", in: app).value as? String,
+      persistedPhoneLink.value as? String,
       "tel://0312345678"
     )
     let persistedDietary = element("personDetail.dietaryNotes", in: app)

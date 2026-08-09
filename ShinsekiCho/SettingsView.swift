@@ -18,6 +18,8 @@ struct SettingsView: View {
     @State private var restorePresentation: BackupRestorePresentation?
     @State private var backupAlert: SettingsBackupAlert?
 
+    var onReplayOnboarding: () -> Void = {}
+
     private var selfPerson: Person? { selfPersonQuery.first }
 
     var body: some View {
@@ -97,6 +99,13 @@ struct SettingsView: View {
 
                 Section("このアプリについて") {
                     LabeledContent("バージョン", value: appVersion)
+                    Button {
+                        onReplayOnboarding()
+                    } label: {
+                        Label("オンボーディングをもう一度見る", systemImage: "sparkles.rectangle.stack")
+                    }
+                    .foregroundStyle(AppTheme.ai)
+                    .accessibilityIdentifier("settings.onboarding.replay")
                 }
                 .listRowBackground(AppTheme.paperRaised)
             }

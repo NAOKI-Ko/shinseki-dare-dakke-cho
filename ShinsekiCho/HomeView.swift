@@ -20,6 +20,8 @@ struct HomeView: View {
   @State private var showingAddSheet = false
   @State private var showingPurchaseSheet = false
 
+  var onStartOnboarding: () -> Void = {}
+
   var body: some View {
     NavigationStack(path: $navigationPath) {
       VStack(spacing: 0) {
@@ -39,7 +41,10 @@ struct HomeView: View {
           case .connections:
             mapContent
           case .list:
-            PersonListView(searchText: $searchText)
+            PersonListView(
+              searchText: $searchText,
+              onRegisterSelf: onStartOnboarding
+            )
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -100,11 +105,17 @@ struct HomeView: View {
       )
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else {
-      ContentUnavailableView(
-        "自分を登録してください",
-        systemImage: "person.crop.circle.badge.plus",
-        description: Text("設定から自分を登録すると、つながりを表示できます。")
-      )
+      VStack(spacing: 16) {
+        ContentUnavailableView(
+          "まず自分を登録しましょう",
+          systemImage: "person.crop.circle.badge.plus",
+          description: Text("自分を起点にすると、親戚のつながりを表示できます。")
+        )
+        Button("自分を登録する", action: onStartOnboarding)
+          .buttonStyle(.borderedProminent)
+          .tint(AppTheme.ai)
+          .accessibilityIdentifier("home.empty.startOnboarding")
+      }
     }
   }
 }

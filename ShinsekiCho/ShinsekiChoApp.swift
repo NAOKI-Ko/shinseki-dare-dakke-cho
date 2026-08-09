@@ -47,7 +47,9 @@ struct ShinsekiChoApp: App {
             if arguments.contains("-ui-testing-reset") {
                 try? KeychainStore().removeValue(forKey: TrialManager.firstLaunchDateKey)
                 UserDefaults.standard.removeObject(forKey: TrialManager.firstLaunchDateKey)
-                UserDefaults.standard.removeObject(forKey: "onboarding.guidePending")
+                UserDefaults.standard.removeObject(forKey: OnboardingStorageKeys.legacyGuidePending)
+                UserDefaults.standard.removeObject(forKey: OnboardingStorageKeys.hasStarted)
+                UserDefaults.standard.removeObject(forKey: OnboardingStorageKeys.hasCompleted)
             }
             if arguments.contains("-ui-testing-trial-expired") {
                 UserDefaults.standard.set(
