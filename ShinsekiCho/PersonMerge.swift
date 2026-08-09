@@ -311,10 +311,22 @@ enum PersonMergePreflight {
             parents: parents,
             children: children
         )
-        if createsCycle(
+        let virtualAdjacency = virtualChildAdjacency(
             survivor: survivor,
             duplicate: duplicate,
             relationship: relationship
+        )
+        if hasLinealSpouseConflict(
+            survivor: survivor,
+            spouse: relationship.spouse,
+            adjacency: virtualAdjacency
+        ) {
+            issues.append(.incompatibleRelationship)
+        }
+        if createsCycle(
+            survivor: survivor,
+            relationship: relationship,
+            adjacency: virtualAdjacency
         ) {
             issues.append(.ancestryCycle)
         }
@@ -347,11 +359,13 @@ enum PersonMergePreflight {
         }
     }
 
-    private static func createsCycle(
+    /// duplicateをsurvivorへ置換し、提案する親子edgeを反映した仮想グラフを作る。
+    /// Previewと実行時で同じ「merge後」の血縁構造を基準に検証するために使う。
+    private static func virtualChildAdjacency(
         survivor: Person,
         duplicate: Person,
         relationship: PersonMergeRelationshipPlan
-    ) -> Bool {
+    ) -> [PersistentIdentifier: Set<PersistentIdentifier>] {
         let survivorID = survivor.persistentModelID
         let duplicateID = duplicate.persistentModelID
         var peopleByID: [PersistentIdentifier: Person] = [:]
@@ -381,6 +395,28 @@ enum PersonMergePreflight {
             adjacency[parent.persistentModelID, default: []].insert(survivorID)
         }
 
+        return adjacency
+    }
+
+    /// merge後に配偶者がsurvivorの祖先または子孫になる場合をmutation前に拒否する。
+    private static func hasLinealSpouseConflict(
+        survivor: Person,
+        spouse: Person?,
+        adjacency: [PersistentIdentifier: Set<PersistentIdentifier>]
+    ) -> Bool {
+        guard let spouse else { return false }
+        let survivorID = survivor.persistentModelID
+        let spouseID = spouse.persistentModelID
+        return reaches(spouseID, from: survivorID, adjacency: adjacency)
+            || reaches(survivorID, from: spouseID, adjacency: adjacency)
+    }
+
+    private static func createsCycle(
+        survivor: Person,
+        relationship: PersonMergeRelationshipPlan,
+        adjacency: [PersistentIdentifier: Set<PersistentIdentifier>]
+    ) -> Bool {
+        let survivorID = survivor.persistentModelID
         for child in relationship.children {
             if reaches(
                 survivorID,

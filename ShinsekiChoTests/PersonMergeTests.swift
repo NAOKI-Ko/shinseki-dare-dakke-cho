@@ -194,9 +194,100 @@ final class PersonMergeTests: XCTestCase {
         XCTAssertTrue(RelationshipManager.setSpouse(duplicate, spouse))
         try container.mainContext.save()
 
-        try merge(survivor, duplicate, in: container.mainContext)
+        let plan = PersonMergePlan.make(survivor: survivor, duplicate: duplicate)
+        XCTAssertTrue(plan.structuralIssues.isEmpty)
+        try PersonMergeService.merge(
+            plan: plan,
+            choices: survivorChoices(plan),
+            in: container.mainContext
+        )
         XCTAssertEqual(survivor.spouse?.persistentModelID, spouse.persistentModelID)
         XCTAssertEqual(spouse.spouse?.persistentModelID, survivor.persistentModelID)
+    }
+
+    func testDuplicateSpouseThatIsSurvivorAncestorBlocksBeforeMutation() throws {
+        let container = try makeContainer()
+        let survivor = Person(name: "残す")
+        let duplicate = Person(name: "重複")
+        let grandparent = Person(name: "祖父")
+        let parent = Person(name: "親")
+        try insert([survivor, duplicate, grandparent, parent], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: grandparent, child: parent))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parent, child: survivor))
+        XCTAssertTrue(RelationshipManager.setSpouse(duplicate, grandparent))
+        try container.mainContext.save()
+
+        let plan = PersonMergePlan.make(survivor: survivor, duplicate: duplicate)
+        XCTAssertTrue(plan.structuralIssues.contains(.incompatibleRelationship))
+        XCTAssertThrowsError(try PersonMergeService.merge(
+            plan: plan,
+            choices: survivorChoices(plan),
+            in: container.mainContext
+        ))
+        XCTAssertNil(survivor.spouse)
+        XCTAssertEqual(duplicate.spouse?.persistentModelID, grandparent.persistentModelID)
+        XCTAssertEqual(grandparent.spouse?.persistentModelID, duplicate.persistentModelID)
+        XCTAssertTrue(contains(survivor.parents, parent))
+    }
+
+    func testDuplicateSpouseThatIsSurvivorDescendantBlocksPreflight() throws {
+        let container = try makeContainer()
+        let survivor = Person(name: "残す")
+        let duplicate = Person(name: "重複")
+        let child = Person(name: "子")
+        let grandchild = Person(name: "孫")
+        try insert([survivor, duplicate, child, grandchild], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: survivor, child: child))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: child, child: grandchild))
+        XCTAssertTrue(RelationshipManager.setSpouse(duplicate, grandchild))
+
+        let plan = PersonMergePlan.make(survivor: survivor, duplicate: duplicate)
+        XCTAssertTrue(plan.structuralIssues.contains(.incompatibleRelationship))
+        XCTAssertThrowsError(try PersonMergeService.merge(
+            plan: plan,
+            choices: survivorChoices(plan),
+            in: container.mainContext
+        ))
+    }
+
+    func testMergedChildrenCannotMakeExistingSpouseADescendant() throws {
+        let container = try makeContainer()
+        let survivor = Person(name: "残す")
+        let duplicate = Person(name: "重複")
+        let spouse = Person(name: "配偶者")
+        let child = Person(name: "子")
+        try insert([survivor, duplicate, spouse, child], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.setSpouse(survivor, spouse))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: duplicate, child: child))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: child, child: spouse))
+
+        let plan = PersonMergePlan.make(survivor: survivor, duplicate: duplicate)
+        XCTAssertTrue(plan.structuralIssues.contains(.incompatibleRelationship))
+        XCTAssertThrowsError(try PersonMergeService.merge(
+            plan: plan,
+            choices: survivorChoices(plan),
+            in: container.mainContext
+        ))
+    }
+
+    func testMergedParentsCannotMakeExistingSpouseAnAncestor() throws {
+        let container = try makeContainer()
+        let survivor = Person(name: "残す")
+        let duplicate = Person(name: "重複")
+        let spouse = Person(name: "配偶者")
+        let parent = Person(name: "親")
+        try insert([survivor, duplicate, spouse, parent], into: container.mainContext)
+        XCTAssertTrue(RelationshipManager.setSpouse(survivor, spouse))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: spouse, child: parent))
+        XCTAssertTrue(RelationshipManager.addParentChild(parent: parent, child: duplicate))
+
+        let plan = PersonMergePlan.make(survivor: survivor, duplicate: duplicate)
+        XCTAssertTrue(plan.structuralIssues.contains(.incompatibleRelationship))
+        XCTAssertThrowsError(try PersonMergeService.merge(
+            plan: plan,
+            choices: survivorChoices(plan),
+            in: container.mainContext
+        ))
     }
 
     func testDifferentSpousesBlockPreflight() throws {
