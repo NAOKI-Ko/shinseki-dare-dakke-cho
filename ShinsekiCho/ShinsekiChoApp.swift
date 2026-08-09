@@ -127,8 +127,30 @@ struct ShinsekiChoApp: App {
         )
         let child = Person(name: "山田 葵", kana: "やまだ あおい", relationNote: "子")
         let uncle = Person(name: "山田 次郎", kana: "やまだ じろう", relationNote: "叔父")
-        [selfPerson, father, mother, spouse, spouseFather, spouseBrother, nephew, child, uncle]
-            .forEach(context.insert)
+        var mergeDuplicate: Person?
+        var mergeDuplicateChild: Person?
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-person-merge") {
+            mergeDuplicate = Person(
+                name: "山田　花子",
+                kana: "やまだ はなこ",
+                relationNote: "母",
+                phone: "052-123-4567",
+                memo: "重複側にだけある会話メモ"
+            )
+            mergeDuplicateChild = Person(
+                name: "重複側の子",
+                kana: "ちょうふくがわのこ",
+                relationNote: "子"
+            )
+        }
+        #endif
+        var people = [
+            selfPerson, father, mother, spouse, spouseFather, spouseBrother, nephew, child, uncle
+        ]
+        if let mergeDuplicate { people.append(mergeDuplicate) }
+        if let mergeDuplicateChild { people.append(mergeDuplicateChild) }
+        people.forEach(context.insert)
         try context.save()
 
         RelationshipManager.setSpouse(father, mother)
@@ -142,6 +164,9 @@ struct ShinsekiChoApp: App {
         RelationshipManager.addParentChild(parent: spouseBrother, child: nephew)
         RelationshipManager.addParentChild(parent: father, child: uncle)
         RelationshipManager.addParentChild(parent: mother, child: uncle)
+        if let mergeDuplicate, let mergeDuplicateChild {
+            RelationshipManager.addParentChild(parent: mergeDuplicate, child: mergeDuplicateChild)
+        }
 
         let gathering = Gathering(
             title: "祖母の一周忌",
@@ -151,6 +176,7 @@ struct ShinsekiChoApp: App {
         )
         context.insert(gathering)
         gathering.attendees.append(selfPerson)
+        if let mergeDuplicate { gathering.attendees.append(mergeDuplicate) }
         try context.save()
     }
 

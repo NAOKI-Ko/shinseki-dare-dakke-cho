@@ -962,6 +962,58 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(replacementCell.waitForExistence(timeout: 5))
   }
 
+  func testDuplicatePersonMergeCompletesProfileAndRewiresGraph() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-person-merge"]
+    )
+    showList(in: app)
+
+    let survivorCell = element("person.cell.山田 花子", in: app)
+    XCTAssertTrue(survivorCell.waitForExistence(timeout: 5))
+    survivorCell.tap()
+
+    let mergeButton = app.buttons["personDetail.mergeDuplicate"]
+    XCTAssertTrue(mergeButton.waitForExistence(timeout: 5))
+    mergeButton.tap()
+    XCTAssertTrue(app.navigationBars["重複した人物を統合"].waitForExistence(timeout: 5))
+
+    let duplicateCandidate = element("personMerge.candidate.山田　花子", in: app)
+    XCTAssertTrue(duplicateCandidate.waitForExistence(timeout: 5))
+    duplicateCandidate.tap()
+    XCTAssertTrue(app.navigationBars["統合内容の確認"].waitForExistence(timeout: 5))
+    XCTAssertTrue(element("personMerge.added.phone", in: app).exists)
+    XCTAssertTrue(element("personMerge.added.memo", in: app).exists)
+
+    let confirmButton = app.buttons["personMerge.confirmButton"]
+    reveal(confirmButton, in: app, maxSwipes: 10)
+    XCTAssertTrue(confirmButton.isEnabled)
+    confirmButton.tap()
+
+    let alert = app.alerts["人物を統合"]
+    XCTAssertTrue(alert.waitForExistence(timeout: 5))
+    alert.buttons["統合する"].tap()
+
+    XCTAssertTrue(app.navigationBars["山田 花子"].waitForExistence(timeout: 5))
+    XCTAssertTrue(element("personDetail.phoneLink", in: app).waitForExistence(timeout: 5))
+    let memo = element("personDetail.memo", in: app)
+    reveal(memo, in: app, maxSwipes: 10)
+    XCTAssertTrue(memo.waitForExistence(timeout: 5))
+    XCTAssertTrue(memo.label.contains("重複側にだけある会話メモ"))
+
+    let canvas = element("connectionMap.canvas", in: app)
+    reveal(canvas, in: app, maxSwipes: 10)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+    let motherNode = element("connectionMap.node.山田 花子", in: app)
+    XCTAssertTrue(motherNode.waitForExistence(timeout: 5))
+    motherNode.tap()
+    XCTAssertTrue(element("connectionMap.node.重複側の子", in: app).waitForExistence(timeout: 5))
+
+    app.navigationBars["山田 花子"].buttons.firstMatch.tap()
+    XCTAssertTrue(element("person.cell.山田 花子", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("person.cell.山田　花子", in: app).exists)
+  }
+
   func testPersonDetailSectionsTopToBottomScreenshots() {
     let app = launch(seed: true)
     showList(in: app)

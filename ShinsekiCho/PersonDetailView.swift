@@ -30,6 +30,7 @@ struct PersonDetailView: View {
     @State private var mapSelectedPerson: Person?
     @State private var showingPurchaseSheet = false
     @State private var graphRevision = UUID()
+    @State private var showingPersonMerge = false
 
     var body: some View {
         List {
@@ -66,6 +67,19 @@ struct PersonDetailView: View {
                 .accessibilityIdentifier("personDetail.editRelations")
             } footer: {
                 Text("配偶者・親・子を登録すると、つながりマップに表示されます。")
+            }
+            .listRowBackground(AppTheme.paperRaised)
+
+            Section {
+                Button {
+                    requestEditing { showingPersonMerge = true }
+                } label: {
+                    Label("重複した人物を統合", systemImage: "person.2.badge.gearshape")
+                }
+                .foregroundStyle(AppTheme.attention)
+                .accessibilityIdentifier("personDetail.mergeDuplicate")
+            } footer: {
+                Text("同じ人物を重複して登録した場合に、確認しながら1人へまとめます。自動では統合されません。")
             }
             .listRowBackground(AppTheme.paperRaised)
 
@@ -215,6 +229,12 @@ struct PersonDetailView: View {
         }
         .sheet(isPresented: $showingRelationEditor) {
             RelationEditorView(person: person) {
+                graphRevision = UUID()
+            }
+        }
+        .sheet(isPresented: $showingPersonMerge) {
+            PersonMergeCandidateView(survivor: person) {
+                showingPersonMerge = false
                 graphRevision = UUID()
             }
         }
@@ -644,6 +664,303 @@ struct RelationshipReplacementSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(AppTheme.paper)
+    }
+}
+
+// MARK: - 重複人物の統合
+
+struct PersonMergeCandidateView: View {
+    @Environment(\.dismiss) private var dismiss
+    let survivor: Person
+    let onMerged: () -> Void
+
+    @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
+    private var allPersons: [Person]
+    @State private var searchText = ""
+
+    private var availablePeople: [Person] {
+        allPersons.filter { $0.persistentModelID != survivor.persistentModelID }
+    }
+
+    private var detectedCandidates: [Person] {
+        PersonDuplicateDetector.candidates(for: survivor, among: availablePeople)
+    }
+
+    private var searchedPeople: [Person] {
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return availablePeople }
+        return availablePeople.filter {
+            $0.name.localizedCaseInsensitiveContains(keyword)
+                || $0.kana.localizedCaseInsensitiveContains(keyword)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("現在開いている「\(survivor.name)」を残し、選択した人物の情報・関係・集まりを統合します。")
+                        .font(.footnote)
+                        .foregroundStyle(AppTheme.inkSoft)
+                }
+                .listRowBackground(AppTheme.paperRaised)
+
+                Section("重複候補") {
+                    if detectedCandidates.isEmpty {
+                        Text("安全に判定できる重複候補はありません。")
+                            .font(.footnote)
+                            .foregroundStyle(AppTheme.inkSoft)
+                    } else {
+                        ForEach(detectedCandidates) { candidate in
+                            candidateLink(candidate)
+                        }
+                    }
+                }
+                .listRowBackground(AppTheme.paperRaised)
+
+                Section("登録済み人物から探す") {
+                    if searchedPeople.isEmpty {
+                        Text("該当する人物はいません。")
+                            .font(.footnote)
+                            .foregroundStyle(AppTheme.inkSoft)
+                    } else {
+                        ForEach(searchedPeople) { candidate in
+                            candidateLink(candidate)
+                        }
+                    }
+                }
+                .listRowBackground(AppTheme.paperRaised)
+            }
+            .searchable(text: $searchText, prompt: "名前・ふりがなで検索")
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.paper)
+            .navigationTitle("重複した人物を統合")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                }
+            }
+        }
+        .presentationBackground(AppTheme.paper)
+    }
+
+    @ViewBuilder
+    private func candidateLink(_ candidate: Person) -> some View {
+        let selfWouldBeDeleted = candidate.isSelf && !survivor.isSelf
+        NavigationLink {
+            PersonMergePreviewView(
+                survivor: survivor,
+                duplicate: candidate,
+                onMerged: onMerged
+            )
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(candidate.name)
+                    .foregroundStyle(selfWouldBeDeleted ? AppTheme.inkSoft : AppTheme.ink)
+                if !candidate.kana.isEmpty {
+                    Text(candidate.kana)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.inkSoft)
+                }
+                if selfWouldBeDeleted {
+                    Text("「自分」の人物詳細から統合してください")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.attention)
+                }
+            }
+        }
+        .disabled(selfWouldBeDeleted)
+        .accessibilityIdentifier("personMerge.candidate.\(candidate.name)")
+    }
+}
+
+struct PersonMergePreviewView: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+
+    let plan: PersonMergePlan
+    let onMerged: () -> Void
+
+    @State private var choices: [PersonMergeField: PersonMergeSide] = [:]
+    @State private var showingFinalConfirmation = false
+    @State private var errorMessage: String?
+
+    init(survivor: Person, duplicate: Person, onMerged: @escaping () -> Void) {
+        plan = PersonMergePlan.make(survivor: survivor, duplicate: duplicate)
+        self.onMerged = onMerged
+    }
+
+    private var allConflictsResolved: Bool {
+        plan.conflicts.allSatisfy { choices[$0.field] != nil }
+    }
+
+    var body: some View {
+        List {
+            Section("残す人物") {
+                personSummary(plan.survivor)
+            }
+            .listRowBackground(AppTheme.paperRaised)
+
+            Section("統合する人物") {
+                personSummary(plan.duplicate)
+            }
+            .listRowBackground(AppTheme.paperRaised)
+
+            if !plan.structuralIssues.isEmpty {
+                Section("先に整理が必要です") {
+                    ForEach(plan.structuralIssues) { issue in
+                        Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(AppTheme.attention)
+                    }
+                }
+                .listRowBackground(AppTheme.paperRaised)
+            }
+
+            Section("追加される情報") {
+                if plan.addedFields.isEmpty {
+                    Text("自動で補完されるプロフィール項目はありません。")
+                        .font(.footnote)
+                        .foregroundStyle(AppTheme.inkSoft)
+                } else {
+                    ForEach(plan.addedFields) { field in
+                        LabeledContent(
+                            field.displayName,
+                            value: plan.automaticProfile.description(for: field)
+                        )
+                        .accessibilityIdentifier("personMerge.added.\(field.rawValue)")
+                    }
+                }
+            }
+            .listRowBackground(AppTheme.paperRaised)
+
+            if !plan.conflicts.isEmpty {
+                Section("確認が必要") {
+                    ForEach(plan.conflicts) { conflict in
+                        conflictRow(conflict)
+                    }
+                }
+                .listRowBackground(AppTheme.paperRaised)
+            }
+
+            Section("引き継ぐつながり") {
+                mergeSummary("配偶者", names: plan.relationship.spouse.map { [$0.name] } ?? [])
+                mergeSummary("親", names: plan.relationship.parents.map(\.name))
+                mergeSummary("子", names: plan.relationship.children.map(\.name))
+                mergeSummary("集まり", names: plan.gatherings.map(\.title))
+            }
+            .listRowBackground(AppTheme.paperRaised)
+
+            Section {
+                Button("統合内容を確認", role: .destructive) {
+                    showingFinalConfirmation = true
+                }
+                .frame(maxWidth: .infinity)
+                .disabled(!plan.structuralIssues.isEmpty || !allConflictsResolved)
+                .accessibilityIdentifier("personMerge.confirmButton")
+            } footer: {
+                Text("統合は自動では実行されません。次の確認で「統合する」を選んだ場合だけ実行します。")
+            }
+            .listRowBackground(AppTheme.paperRaised)
+        }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.paper)
+        .navigationTitle("統合内容の確認")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("人物を統合", isPresented: $showingFinalConfirmation) {
+            Button("統合する", role: .destructive) { performMerge() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text(
+                "「\(plan.duplicate.name)」を「\(plan.survivor.name)」に統合します。\n\n"
+                    + "統合後、「\(plan.duplicate.name)」の人物レコードは削除されます。関係・集まり・選択したプロフィール情報は「\(plan.survivor.name)」に引き継がれます。"
+            )
+        }
+        .alert(
+            "統合できませんでした",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private func personSummary(_ person: Person) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(person.name).foregroundStyle(AppTheme.ink)
+            if !person.kana.isEmpty {
+                Text(person.kana)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.inkSoft)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func conflictRow(_ conflict: PersonMergeConflict) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(conflict.field.displayName)
+                .font(.subheadline.weight(.medium))
+            choiceButton(
+                field: conflict.field,
+                side: .survivor,
+                title: "現在の人物を残す",
+                value: conflict.survivorValue
+            )
+            choiceButton(
+                field: conflict.field,
+                side: .duplicate,
+                title: "重複人物から引き継ぐ",
+                value: conflict.duplicateValue
+            )
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func choiceButton(
+        field: PersonMergeField,
+        side: PersonMergeSide,
+        title: String,
+        value: String
+    ) -> some View {
+        Button {
+            choices[field] = side
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: choices[field] == side ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(choices[field] == side ? AppTheme.ai : AppTheme.ruleStrong)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.caption).foregroundStyle(AppTheme.inkSoft)
+                    Text(value).foregroundStyle(AppTheme.ink)
+                }
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("personMerge.conflict.\(field.rawValue).\(side.rawValue)")
+    }
+
+    @ViewBuilder
+    private func mergeSummary(_ label: String, names: [String]) -> some View {
+        LabeledContent(label, value: names.isEmpty ? "なし" : names.joined(separator: "、"))
+    }
+
+    private func performMerge() {
+        do {
+            _ = try PersonMergeService.merge(plan: plan, choices: choices, in: context)
+            errorMessage = nil
+            onMerged()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
