@@ -34,6 +34,8 @@
 		C00000000000000000000024 /* PersonMemorySummaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000025 /* PersonMemorySummaryTests.swift */; };
 		C00000000000000000000025 /* GatheringPrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000026 /* GatheringPrep.swift */; };
 		C00000000000000000000026 /* GatheringPrepTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000027 /* GatheringPrepTests.swift */; };
+		C00000000000000000000027 /* PersonSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000028 /* PersonSearch.swift */; };
+		C00000000000000000000028 /* PersonSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000029 /* PersonSearchTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +83,8 @@
 		A00000000000000000000025 /* PersonMemorySummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonMemorySummaryTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000026 /* GatheringPrep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatheringPrep.swift; sourceTree = "<group>"; };
 		A00000000000000000000027 /* GatheringPrepTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatheringPrepTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000028 /* PersonSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonSearch.swift; sourceTree = "<group>"; };
+		A00000000000000000000029 /* PersonSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonSearchTests.swift; sourceTree = "<group>"; };
 		B00000000000000000000001 /* ShinsekiCho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ShinsekiCho.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000002 /* ShinsekiChoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShinsekiChoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000003 /* ShinsekiChoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShinsekiChoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -153,6 +157,7 @@
 				A00000000000000000000022 /* PersonMerge.swift */,
 				A00000000000000000000024 /* PersonMemorySummary.swift */,
 				A00000000000000000000026 /* GatheringPrep.swift */,
+				A00000000000000000000028 /* PersonSearch.swift */,
 				A00000000000000000000003 /* ContentView.swift */,
 				A00000000000000000000020 /* HomeView.swift */,
 				A00000000000000000000004 /* OnboardingView.swift */,
@@ -179,6 +184,7 @@
 				A00000000000000000000023 /* PersonMergeTests.swift */,
 				A00000000000000000000025 /* PersonMemorySummaryTests.swift */,
 				A00000000000000000000027 /* GatheringPrepTests.swift */,
+				A00000000000000000000029 /* PersonSearchTests.swift */,
 			);
 			path = ShinsekiChoTests;
 			sourceTree = "<group>";
@@ -326,6 +332,7 @@
 				C00000000000000000000021 /* PersonMerge.swift in Sources */,
 				C00000000000000000000023 /* PersonMemorySummary.swift in Sources */,
 				C00000000000000000000025 /* GatheringPrep.swift in Sources */,
+				C00000000000000000000027 /* PersonSearch.swift in Sources */,
 				C00000000000000000000003 /* ContentView.swift in Sources */,
 				C00000000000000000000019 /* HomeView.swift in Sources */,
 				C00000000000000000000004 /* OnboardingView.swift in Sources */,
@@ -350,6 +357,7 @@
 				C00000000000000000000022 /* PersonMergeTests.swift in Sources */,
 				C00000000000000000000024 /* PersonMemorySummaryTests.swift in Sources */,
 				C00000000000000000000026 /* GatheringPrepTests.swift in Sources */,
+				C00000000000000000000028 /* PersonSearchTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

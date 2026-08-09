@@ -122,7 +122,8 @@ struct ShinsekiChoApp: App {
         )
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist")
-            || ProcessInfo.processInfo.arguments.contains("-ui-testing-gathering-prep") {
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-gathering-prep")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-search-enhancement") {
             spouseBrother.lastMetDate = Calendar(identifier: .gregorian).date(
                 from: DateComponents(year: 2026, month: 7, day: 12)
             )
@@ -210,6 +211,18 @@ struct ShinsekiChoApp: App {
             prepGathering.attendees.append(contentsOf: [
                 selfPerson, spouseBrother, mother, spouseFather
             ])
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-search-enhancement") {
+            let searchGathering = Gathering(
+                title: "親族の集まり",
+                date: Calendar(identifier: .gregorian).date(
+                    from: DateComponents(year: 2026, month: 8, day: 15)
+                )!,
+                place: "横浜",
+                note: "検索UIテスト用"
+            )
+            context.insert(searchGathering)
+            searchGathering.attendees.append(spouseBrother)
         }
         #endif
         try context.save()

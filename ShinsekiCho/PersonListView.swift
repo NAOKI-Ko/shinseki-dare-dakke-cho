@@ -5,21 +5,29 @@ import PhotosUI
 struct PersonListView: View {
     @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
     private var persons: [Person]
+    @Query(filter: #Predicate<Person> { $0.isSelf })
+    private var selfPeople: [Person]
 
     @Binding var searchText: String
 
     private let columns = [GridItem(.adaptive(minimum: 92), spacing: 14)]
 
-    private var filteredPersons: [Person] {
-        guard !searchText.isEmpty else { return persons }
-        return persons.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText)
-                || $0.kana.localizedCaseInsensitiveContains(searchText)
-                || $0.relationNote.localizedCaseInsensitiveContains(searchText)
-        }
+    private var searchResults: [PersonSearchResult] {
+        PersonSearchEngine.search(
+            persons: persons,
+            selfPerson: selfPeople.first,
+            query: searchText
+        )
+    }
+
+    private var isSearching: Bool {
+        !PersonSearchNormalizer.normalize(searchText).isEmpty
     }
 
     var body: some View {
+        // body評価ごとに検索文書を1回だけ作り、同じ結果をEmpty判定とGridで共有する。
+        let results = searchResults
+        let searching = isSearching
         Group {
             if persons.isEmpty {
                 VStack(spacing: 14) {
@@ -37,17 +45,33 @@ struct PersonListView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(AppTheme.paper)
+            } else if results.isEmpty, searching {
+                ContentUnavailableView(
+                    "該当する人物はいません",
+                    systemImage: "person.crop.circle.badge.questionmark",
+                    description: Text(
+                        "名前・続柄・地域・集まりなど、\n覚えている手掛かりを変えて試してください。"
+                    )
+                )
+                .accessibilityIdentifier("person.search.empty")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AppTheme.paper)
             } else {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(filteredPersons) { person in
-                            NavigationLink(value: person) {
-                                PersonGridCell(person: person)
+                        ForEach(results, id: \.person.persistentModelID) { result in
+                            NavigationLink(value: result.person) {
+                                PersonGridCell(
+                                    person: result.person,
+                                    searchReason: searching
+                                        ? result.primaryMatchReason?.displayText
+                                        : nil
+                                )
                             }
                             .buttonStyle(.plain)
-                            .accessibilityIdentifier("person.cell.\(person.name)")
+                            .accessibilityIdentifier("person.cell.\(result.person.name)")
                             .accessibilityValue(
-                                PersonPhotoSupport.image(from: person.photoData) == nil
+                                PersonPhotoSupport.image(from: result.person.photoData) == nil
                                     ? "写真なし"
                                     : "写真あり"
                             )
@@ -65,6 +89,7 @@ struct PersonListView: View {
 
 private struct PersonGridCell: View {
     let person: Person
+    let searchReason: String?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -96,6 +121,15 @@ private struct PersonGridCell: View {
                     .font(.caption2)
                     .foregroundStyle(AppTheme.inkSoft)
                     .lineLimit(1)
+            }
+
+            if let searchReason {
+                Text(searchReason)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(AppTheme.ai)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("person.searchReason.\(person.name)")
             }
         }
         .frame(width: 92)

@@ -50,7 +50,7 @@ struct HomeView: View {
       .searchable(
         text: $searchText,
         placement: .navigationBarDrawer(displayMode: .always),
-        prompt: "名前・続柄で探す"
+        prompt: "名前・続柄・地域・集まりで探す"
       )
       .toolbar {
         ToolbarItem(placement: .primaryAction) {

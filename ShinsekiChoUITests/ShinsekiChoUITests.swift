@@ -532,6 +532,83 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(element("connectionMap.node.山田 太郎", in: app).exists)
   }
 
+  func testEnhancedPersonSearchUsesCluesReasonsAndANDThenRestoresMap() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-search-enhancement"]
+    )
+    XCTAssertTrue(element("connectionMap.home.canvas", in: app).waitForExistence(timeout: 5))
+    let searchField = app.searchFields.firstMatch
+    XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+
+    func clearSearchAndWaitForMap() {
+      let clearButton = searchField.buttons.firstMatch
+      XCTAssertTrue(clearButton.waitForExistence(timeout: 3))
+      clearButton.tap()
+      XCTAssertTrue(element("connectionMap.home.canvas", in: app).waitForExistence(timeout: 5))
+    }
+
+    func search(_ text: String) {
+      searchField.tap()
+      searchField.typeText(text)
+    }
+
+    // 地域検索と一致理由。
+    search("横浜")
+    XCTAssertTrue(element("person.cell.佐藤 健太", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("person.cell.山田 一郎", in: app).exists)
+    let livingReason = element("person.searchReason.佐藤 健太", in: app)
+    XCTAssertTrue(livingReason.waitForExistence(timeout: 5))
+    XCTAssertTrue(livingReason.label.contains("居住地：横浜"))
+    clearSearchAndWaitForMap()
+
+    // tokenは別fieldに一致できるが、両方一致する人物だけを残す。
+    search("横浜 健太")
+    XCTAssertTrue(element("person.cell.佐藤 健太", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("person.cell.佐藤 美咲", in: app).exists)
+    XCTAssertFalse(element("person.cell.山田 太郎", in: app).exists)
+    clearSearchAndWaitForMap()
+
+    // relationship routeにspouseを含む人物だけを検索する。
+    search("配偶者側")
+    XCTAssertTrue(element("person.cell.佐藤 健太", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("person.cell.山田 太郎", in: app).exists)
+    XCTAssertFalse(element("person.cell.山田 一郎", in: app).exists)
+    clearSearchAndWaitForMap()
+
+    // Gathering attendeeを、集まり名から1人物1結果で検索する。
+    search("親族の集まり")
+    XCTAssertTrue(element("person.cell.佐藤 健太", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("person.cell.山田 花子", in: app).exists)
+    let gatheringReason = element("person.searchReason.佐藤 健太", in: app)
+    XCTAssertTrue(gatheringReason.waitForExistence(timeout: 5))
+    XCTAssertTrue(gatheringReason.label.contains("集まり：親族の集まり"))
+    clearSearchAndWaitForMap()
+
+    // 0件時は空のgridではなく、明示的なNo Resultを表示する。
+    search("絶対に存在しない検索語")
+    XCTAssertTrue(element("person.search.empty", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("person.cell.佐藤 健太", in: app).exists)
+    clearSearchAndWaitForMap()
+  }
+
+  func testExpiredTrialCanUseEnhancedSearchWithoutPurchaseSheet() {
+    let app = launch(
+      seed: true,
+      additionalArguments: [
+        "-ui-testing-search-enhancement",
+        "-ui-testing-trial-expired"
+      ]
+    )
+    let searchField = app.searchFields.firstMatch
+    XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+    searchField.tap()
+    searchField.typeText("横浜 健太")
+
+    XCTAssertTrue(element("person.cell.佐藤 健太", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("purchase.sheet", in: app).exists)
+  }
+
   func testConnectionLayersKeepEdgesBehindOpaqueNodes() {
     let app = launch(seed: true)
     XCTAssertTrue(app.navigationBars["つながり"].waitForExistence(timeout: 5))
