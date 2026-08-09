@@ -58,7 +58,7 @@ struct PersonDetailView: View {
             // 保存済み情報だけで「この人は誰か」を先に思い出せるようにする。
             // 経路は永続化せず、現在の関係グラフから表示のたびに再計算する。
             Section {
-                PersonMemorySummaryCard(summary: memorySummary)
+                PersonMemorySummaryView(summary: memorySummary)
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                     .listRowBackground(Color.clear)
             }
@@ -300,7 +300,7 @@ struct PersonDetailView: View {
     }
 }
 
-private struct PersonMemorySummaryCard: View {
+struct PersonMemorySummaryView: View {
     let summary: PersonMemorySummary
 
     var body: some View {

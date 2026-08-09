@@ -44,6 +44,7 @@ struct GatheringListView: View {
                                     .foregroundStyle(AppTheme.inkSoft)
                                 }
                             }
+                            .accessibilityIdentifier("gathering.cell.\(gathering.title)")
                             .listRowBackground(AppTheme.paperRaised)
                         }
                         .onDelete { offsets in
@@ -164,6 +165,27 @@ struct GatheringDetailView: View {
                 LabeledContent("日付", value: gathering.date.formatted(.dateTime.year().month().day()))
                 if !gathering.note.isEmpty {
                     Text(gathering.note).font(.subheadline).foregroundStyle(AppTheme.inkSoft)
+                }
+            }
+            .listRowBackground(AppTheme.paperRaised)
+
+            Section {
+                let prepSession = GatheringPrepBuilder.make(gathering: gathering)
+                if prepSession.count > 0 {
+                    NavigationLink {
+                        GatheringPrepView(gathering: gathering)
+                    } label: {
+                        Label("集まりの前に確認", systemImage: "rectangle.stack.person.crop")
+                            .foregroundStyle(AppTheme.ai)
+                    }
+                    .accessibilityIdentifier("gathering.prepButton")
+                } else {
+                    Label(
+                        "出席者を登録すると、集まりの前に確認できます",
+                        systemImage: "person.2.slash"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(AppTheme.inkSoft)
                 }
             }
             .listRowBackground(AppTheme.paperRaised)

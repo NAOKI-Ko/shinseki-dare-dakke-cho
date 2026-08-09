@@ -171,7 +171,7 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertEqual(selfCell.value as? String, "写真なし")
     XCTAssertEqual(
       element("person.cell.佐藤 美咲", in: app).value as? String,
-      "写真なし"
+      "写真あり"
     )
     XCTAssertEqual(
       element("person.cell.山田 花子", in: app).value as? String,
@@ -1098,6 +1098,88 @@ final class ShinsekiChoUITests: XCTestCase {
     revealInPersonDetail(gathering, in: app)
     XCTAssertTrue(gathering.waitForExistence(timeout: 5))
     keepScreenshot(app, name: "人物詳細_02_プロフィール・つながり・集まり_ライト")
+  }
+
+  func testGatheringPrepReviewsAttendeesAndPreservesPositionAcrossDetail() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-gathering-prep"]
+    )
+    app.buttons["集まり"].tap()
+
+    let gatheringCell = element("gathering.cell.親族の集まり", in: app)
+    XCTAssertTrue(gatheringCell.waitForExistence(timeout: 5))
+    gatheringCell.tap()
+    XCTAssertTrue(app.navigationBars["親族の集まり"].waitForExistence(timeout: 5))
+
+    let prepButton = app.buttons["gathering.prepButton"]
+    XCTAssertTrue(prepButton.waitForExistence(timeout: 5))
+    prepButton.tap()
+    XCTAssertTrue(element("gatheringPrep.root", in: app).waitForExistence(timeout: 5))
+
+    let progress = element("gatheringPrep.progress", in: app)
+    let personName = element("gatheringPrep.personName", in: app)
+    XCTAssertTrue(progress.label.contains("1 / 3"))
+    XCTAssertEqual(personName.label, "佐藤 健太")
+    XCTAssertFalse(personName.label.contains("山田 太郎"))
+
+    let relationship = element("personMemory.relationship", in: app)
+    XCTAssertTrue(relationship.waitForExistence(timeout: 5))
+    XCTAssertTrue(relationship.label.contains("自分"))
+    XCTAssertTrue(relationship.label.contains("配偶者"))
+    XCTAssertTrue(relationship.label.contains("配偶者の兄（佐藤 健太）"))
+    XCTAssertTrue(element("personMemory.lastMet", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(element("personMemory.memo", in: app).waitForExistence(timeout: 5))
+    let recentGathering = element("personMemory.latestGathering", in: app)
+    XCTAssertTrue(recentGathering.waitForExistence(timeout: 5))
+    XCTAssertTrue(recentGathering.label.contains("祖母の一周忌"))
+    XCTAssertFalse(recentGathering.label.contains("親族の集まり"))
+
+    let next = app.buttons["gatheringPrep.next"]
+    next.tap()
+    XCTAssertTrue(progress.label.contains("2 / 3"))
+    XCTAssertEqual(personName.label, "佐藤 修一")
+
+    app.buttons["gatheringPrep.previous"].tap()
+    XCTAssertTrue(progress.label.contains("1 / 3"))
+    XCTAssertEqual(personName.label, "佐藤 健太")
+
+    let showDetail = app.buttons["gatheringPrep.showDetail"]
+    reveal(showDetail, in: app)
+    XCTAssertTrue(showDetail.isHittable)
+    showDetail.tap()
+    XCTAssertTrue(app.navigationBars["佐藤 健太"].waitForExistence(timeout: 5))
+    app.buttons["閉じる"].tap()
+    XCTAssertTrue(element("gatheringPrep.root", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(progress.label.contains("1 / 3"))
+    XCTAssertEqual(personName.label, "佐藤 健太")
+
+    app.buttons["gatheringPrep.next"].tap()
+    app.buttons["gatheringPrep.next"].tap()
+    XCTAssertTrue(progress.label.contains("3 / 3"))
+    XCTAssertEqual(personName.label, "山田 花子")
+    let finish = app.buttons["gatheringPrep.finish"]
+    XCTAssertTrue(finish.waitForExistence(timeout: 5))
+    finish.tap()
+    XCTAssertTrue(app.navigationBars["親族の集まり"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["gathering.prepButton"].exists)
+  }
+
+  func testExpiredTrialCanOpenGatheringPrepWithoutPurchaseSheet() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-gathering-prep", "-ui-testing-trial-expired"]
+    )
+    app.buttons["集まり"].tap()
+    let gatheringCell = element("gathering.cell.親族の集まり", in: app)
+    XCTAssertTrue(gatheringCell.waitForExistence(timeout: 5))
+    gatheringCell.tap()
+
+    let prepButton = app.buttons["gathering.prepButton"]
+    XCTAssertTrue(prepButton.waitForExistence(timeout: 5))
+    prepButton.tap()
+    XCTAssertTrue(element("gatheringPrep.root", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("purchase.sheet", in: app).exists)
   }
 
   func testExpiredTrialBlocksEditingButKeepsExistingDataReadable() {

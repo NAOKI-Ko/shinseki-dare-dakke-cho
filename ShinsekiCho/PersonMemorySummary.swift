@@ -42,7 +42,12 @@ struct PersonMemorySummary: Equatable {
 }
 
 enum PersonMemorySummaryBuilder {
-    static func make(selfPerson: Person?, target: Person) -> PersonMemorySummary {
+    static func make(
+        selfPerson: Person?,
+        target: Person,
+        excludingGathering: Gathering? = nil,
+        latestGatheringBefore cutoffDate: Date? = nil
+    ) -> PersonMemorySummary {
         let relationship = makeRelationship(selfPerson: selfPerson, target: target)
         let lastMet = target.lastMetDate.map {
             PersonMemorySummary.LastMet(
@@ -50,7 +55,16 @@ enum PersonMemorySummaryBuilder {
                 place: normalized(target.lastMetPlace)
             )
         }
-        let latestGathering = target.gatherings.max { lhs, rhs in
+        let excludedID = excludingGathering?.persistentModelID
+        let latestGathering = target.gatherings.filter { gathering in
+            if let excludedID, gathering.persistentModelID == excludedID {
+                return false
+            }
+            if let cutoffDate, gathering.date >= cutoffDate {
+                return false
+            }
+            return true
+        }.max { lhs, rhs in
             lhs.date < rhs.date
         }.map {
             PersonMemorySummary.GatheringRecall(title: $0.title, date: $0.date)

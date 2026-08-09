@@ -121,7 +121,8 @@ struct ShinsekiChoApp: App {
             relationNote: "配偶者の兄"
         )
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist") {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-gathering-prep") {
             spouseBrother.lastMetDate = Calendar(identifier: .gregorian).date(
                 from: DateComponents(year: 2026, month: 7, day: 12)
             )
@@ -188,11 +189,29 @@ struct ShinsekiChoApp: App {
         context.insert(gathering)
         gathering.attendees.append(selfPerson)
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist") {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-gathering-prep") {
             gathering.attendees.append(spouseBrother)
         }
         #endif
         if let mergeDuplicate { gathering.attendees.append(mergeDuplicate) }
+
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-gathering-prep") {
+            let prepGathering = Gathering(
+                title: "親族の集まり",
+                date: Calendar(identifier: .gregorian).date(
+                    from: DateComponents(year: 2026, month: 8, day: 15)
+                )!,
+                place: "名古屋",
+                note: "予習モードUIテスト用"
+            )
+            context.insert(prepGathering)
+            prepGathering.attendees.append(contentsOf: [
+                selfPerson, spouseBrother, mother, spouseFather
+            ])
+        }
+        #endif
         try context.save()
     }
 
