@@ -13,9 +13,11 @@ struct OnboardingFlowView: View {
     @Environment(TrialManager.self) private var trialManager
     @Environment(\.modelContext) private var context
 
+    let mode: OnboardingMode
     let existingSelf: Person?
     let onComplete: () -> Void
     let onSkip: () -> Void
+    let replaySnapshot: OnboardingFamilySnapshot
 
     @State private var step: OnboardingStep = .welcome
     @State private var draft: OnboardingDraft
@@ -23,13 +25,16 @@ struct OnboardingFlowView: View {
     @State private var showingPurchaseSheet = false
 
     init(
+        mode: OnboardingMode,
         existingSelf: Person?,
         onComplete: @escaping () -> Void,
         onSkip: @escaping () -> Void
     ) {
+        self.mode = mode
         self.existingSelf = existingSelf
         self.onComplete = onComplete
         self.onSkip = onSkip
+        replaySnapshot = OnboardingFamilySnapshot(existingSelf: existingSelf)
         _draft = State(initialValue: OnboardingDraft(existingSelf: existingSelf))
     }
 
@@ -63,15 +68,36 @@ struct OnboardingFlowView: View {
                 case .welcome:
                     WelcomeStep(onNext: { move(to: .selfRegistration) })
                 case .selfRegistration:
-                    SelfStep(draft: $draft, onNext: { move(to: .family) })
+                    if mode == .replay {
+                        ReplaySelfStep(
+                            snapshot: replaySnapshot,
+                            onNext: { move(to: .family) }
+                        )
+                    } else {
+                        SelfStep(draft: $draft, onNext: { move(to: .family) })
+                    }
                 case .family:
-                    FamilyStep(draft: $draft, onNext: { move(to: .grandparents) })
+                    if mode == .replay {
+                        ReplayFamilyStep(
+                            snapshot: replaySnapshot,
+                            onNext: { move(to: .grandparents) }
+                        )
+                    } else {
+                        FamilyStep(draft: $draft, onNext: { move(to: .grandparents) })
+                    }
                 case .grandparents:
-                    GrandparentStep(
-                        draft: $draft,
-                        onSave: saveAndFinish,
-                        onSkip: clearGrandparentsAndFinish
-                    )
+                    if mode == .replay {
+                        ReplayGrandparentStep(
+                            snapshot: replaySnapshot,
+                            onNext: completeReplayAndFinish
+                        )
+                    } else {
+                        GrandparentStep(
+                            draft: $draft,
+                            onSave: saveAndFinish,
+                            onSkip: clearGrandparentsAndFinish
+                        )
+                    }
                 case .finish:
                     FinishStep(onComplete: onComplete)
                 }
@@ -116,12 +142,31 @@ struct OnboardingFlowView: View {
     }
 
     private func saveAndFinish() {
+        guard mode.allowsRegistration else {
+            completeReplayAndFinish()
+            return
+        }
         guard trialManager.canEdit else {
             showingPurchaseSheet = true
             return
         }
         do {
-            try OnboardingRegistrationService.register(
+            try OnboardingCompletionService.complete(
+                mode: mode,
+                draft: draft,
+                existingSelf: existingSelf,
+                in: context
+            )
+            move(to: .finish)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func completeReplayAndFinish() {
+        do {
+            try OnboardingCompletionService.complete(
+                mode: .replay,
                 draft: draft,
                 existingSelf: existingSelf,
                 in: context

@@ -163,6 +163,68 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
   }
 
+  func testSettingsReplayIsReadOnlyAndNonDestructiveWhenTrialExpired() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-trial-expired"]
+    )
+    XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
+
+    app.buttons["一覧"].tap()
+    let personCells = app.buttons.matching(
+      NSPredicate(format: "identifier BEGINSWITH %@", "person.cell.")
+    )
+    let initialPersonCount = personCells.count
+    XCTAssertEqual(initialPersonCount, 9)
+
+    app.buttons["設定"].tap()
+    let replay = app.buttons["settings.onboarding.replay"]
+    reveal(replay, in: app)
+    XCTAssertTrue(replay.isHittable)
+    replay.tap()
+
+    XCTAssertTrue(element("onboarding.welcome", in: app).waitForExistence(timeout: 5))
+    app.buttons["onboarding.welcome.next"].tap()
+    XCTAssertTrue(element("onboarding.replay.self", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("purchase.sheet", in: app).exists)
+
+    app.buttons["onboarding.replay.self.next"].tap()
+    XCTAssertTrue(element("onboarding.replay.family", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(
+      element("onboarding.replay.registered.父.山田 一郎", in: app).exists
+    )
+    XCTAssertTrue(
+      element("onboarding.replay.registered.母.山田 花子", in: app).exists
+    )
+    XCTAssertTrue(
+      element("onboarding.replay.registered.配偶者.佐藤 美咲", in: app).exists
+    )
+    XCTAssertFalse(element("purchase.sheet", in: app).exists)
+
+    app.buttons["onboarding.replay.family.next"].tap()
+    XCTAssertTrue(
+      element("onboarding.replay.grandparents", in: app).waitForExistence(timeout: 5)
+    )
+    app.buttons["onboarding.replay.grandparents.next"].tap()
+    XCTAssertTrue(element("onboarding.finish", in: app).waitForExistence(timeout: 5))
+    XCTAssertFalse(element("purchase.sheet", in: app).exists)
+    app.buttons["onboarding.finish.complete"].tap()
+
+    XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
+    XCTAssertTrue(element("connectionMap.node.山田 一郎", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(element("connectionMap.node.山田 花子", in: app).exists)
+    XCTAssertTrue(element("connectionMap.node.佐藤 美咲", in: app).exists)
+
+    app.buttons["一覧"].tap()
+    XCTAssertEqual(personCells.count, initialPersonCount)
+    XCTAssertEqual(element("person.cell.山田 一郎", in: app).exists, true)
+    XCTAssertEqual(element("person.cell.山田 花子", in: app).exists, true)
+    XCTAssertEqual(element("person.cell.佐藤 美咲", in: app).exists, true)
+
+    app.buttons["設定"].tap()
+    XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 5))
+  }
+
   func testSeededGraphExpansionGesturesResetGatheringPhotoAndPersistence() {
     var app = launch(
       seed: true,

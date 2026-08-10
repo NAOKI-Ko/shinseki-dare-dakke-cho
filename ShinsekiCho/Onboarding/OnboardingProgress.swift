@@ -7,6 +7,15 @@ enum OnboardingStorageKeys {
     static let legacyGuidePending = "onboarding.guidePending"
 }
 
+enum OnboardingMode: Equatable {
+    case firstRun
+    case replay
+
+    var allowsRegistration: Bool {
+        self == .firstRun
+    }
+}
+
 /// 初回表示・完了・設定からの再実行を、UIやUserDefaultsから独立して判定する。
 struct OnboardingProgress: Equatable {
     var hasStarted: Bool
@@ -84,6 +93,98 @@ struct OnboardingDraft: Equatable {
     }
 }
 
+struct OnboardingExistingFamilyItem: Equatable, Identifiable {
+    let id: String
+    let role: String
+    let name: String
+}
+
+/// Replayで表示する既存関係の読み取り専用スナップショット。
+/// Personを保持しないため、説明画面からrelationshipを変更できない。
+struct OnboardingFamilySnapshot: Equatable {
+    let selfName: String
+    let selfPhotoData: Data?
+    let familyItems: [OnboardingExistingFamilyItem]
+    let grandparentItems: [OnboardingExistingFamilyItem]
+
+    @MainActor
+    init(existingSelf: Person?) {
+        guard let existingSelf else {
+            selfName = ""
+            selfPhotoData = nil
+            familyItems = []
+            grandparentItems = []
+            return
+        }
+
+        selfName = existingSelf.name
+        selfPhotoData = existingSelf.photoData
+
+        var family: [OnboardingExistingFamilyItem] = []
+        for (index, parent) in existingSelf.parents
+            .sorted(by: { $0.createdAt < $1.createdAt })
+            .enumerated() {
+            family.append(
+                OnboardingExistingFamilyItem(
+                    id: "parent-\(index)-\(parent.persistentModelID)",
+                    role: Self.parentRole(for: parent),
+                    name: parent.name
+                )
+            )
+        }
+        if let spouse = existingSelf.spouse {
+            family.append(
+                OnboardingExistingFamilyItem(
+                    id: "spouse-\(spouse.persistentModelID)",
+                    role: "配偶者",
+                    name: spouse.name
+                )
+            )
+        }
+        for (index, sibling) in existingSelf.siblings
+            .sorted(by: { $0.createdAt < $1.createdAt })
+            .enumerated() {
+            family.append(
+                OnboardingExistingFamilyItem(
+                    id: "sibling-\(index)-\(sibling.persistentModelID)",
+                    role: "兄弟・姉妹",
+                    name: sibling.name
+                )
+            )
+        }
+        familyItems = family
+
+        var grandparents: [OnboardingExistingFamilyItem] = []
+        for (parentIndex, parent) in existingSelf.parents
+            .sorted(by: { $0.createdAt < $1.createdAt })
+            .enumerated() {
+            for (grandparentIndex, grandparent) in parent.parents
+                .sorted(by: { $0.createdAt < $1.createdAt })
+                .enumerated() {
+                grandparents.append(
+                    OnboardingExistingFamilyItem(
+                        id: "grandparent-\(parentIndex)-\(grandparentIndex)-\(grandparent.persistentModelID)",
+                        role: Self.grandparentRole(for: grandparent, parent: parent),
+                        name: grandparent.name
+                    )
+                )
+            }
+        }
+        grandparentItems = grandparents
+    }
+
+    private static func parentRole(for person: Person) -> String {
+        let note = person.relationNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        return note == "父" || note == "母" ? note : "親"
+    }
+
+    private static func grandparentRole(for person: Person, parent: Person) -> String {
+        let note = person.relationNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        if note.contains("祖父") || note.contains("祖母") { return note }
+        return "\(parent.name)の親"
+    }
+}
+
 enum OnboardingRegistrationError: LocalizedError {
     case emptySelfName
     case invalidRelationship
@@ -94,6 +195,29 @@ enum OnboardingRegistrationError: LocalizedError {
             "あなたのお名前を入力してください。"
         case .invalidRelationship:
             "家族の関係を保存できませんでした。入力内容を確認してください。"
+        }
+    }
+}
+
+@MainActor
+enum OnboardingCompletionService {
+    /// Replayは説明の再表示だけなので、ModelContextへ一切書き込まない。
+    @discardableResult
+    static func complete(
+        mode: OnboardingMode,
+        draft: OnboardingDraft,
+        existingSelf: Person?,
+        in context: ModelContext
+    ) throws -> Person? {
+        switch mode {
+        case .firstRun:
+            return try OnboardingRegistrationService.register(
+                draft: draft,
+                existingSelf: existingSelf,
+                in: context
+            )
+        case .replay:
+            return nil
         }
     }
 }

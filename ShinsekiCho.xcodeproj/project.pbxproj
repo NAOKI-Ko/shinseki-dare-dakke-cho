@@ -19,6 +19,7 @@
 		C00000000000000000000036 /* GrandparentStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000037 /* GrandparentStep.swift */; };
 		C00000000000000000000037 /* FinishStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000038 /* FinishStep.swift */; };
 		C00000000000000000000038 /* OnboardingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000039 /* OnboardingTests.swift */; };
+		C00000000000000000000039 /* ReplaySteps.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000040 /* ReplaySteps.swift */; };
 		C00000000000000000000005 /* PersonListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000005 /* PersonListView.swift */; };
 		C00000000000000000000006 /* PersonDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000006 /* PersonDetailView.swift */; };
 		C00000000000000000000007 /* ConnectionMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000007 /* ConnectionMapView.swift */; };
@@ -76,6 +77,7 @@
 		A00000000000000000000037 /* GrandparentStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrandparentStep.swift; sourceTree = "<group>"; };
 		A00000000000000000000038 /* FinishStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinishStep.swift; sourceTree = "<group>"; };
 		A00000000000000000000039 /* OnboardingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000040 /* ReplaySteps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplaySteps.swift; sourceTree = "<group>"; };
 		A00000000000000000000005 /* PersonListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonListView.swift; sourceTree = "<group>"; };
 		A00000000000000000000006 /* PersonDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonDetailView.swift; sourceTree = "<group>"; };
 		A00000000000000000000007 /* ConnectionMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionMapView.swift; sourceTree = "<group>"; };
@@ -204,6 +206,7 @@
 				A00000000000000000000036 /* FamilyStep.swift */,
 				A00000000000000000000037 /* GrandparentStep.swift */,
 				A00000000000000000000038 /* FinishStep.swift */,
+				A00000000000000000000040 /* ReplaySteps.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -378,6 +381,7 @@
 				C00000000000000000000035 /* FamilyStep.swift in Sources */,
 				C00000000000000000000036 /* GrandparentStep.swift in Sources */,
 				C00000000000000000000037 /* FinishStep.swift in Sources */,
+				C00000000000000000000039 /* ReplaySteps.swift in Sources */,
 				C00000000000000000000005 /* PersonListView.swift in Sources */,
 				C00000000000000000000006 /* PersonDetailView.swift in Sources */,
 				C00000000000000000000007 /* ConnectionMapView.swift in Sources */,

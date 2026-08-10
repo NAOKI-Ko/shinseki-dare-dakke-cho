@@ -30,6 +30,7 @@ struct ContentView: View {
         Group {
             if shouldPresentOnboarding {
                 OnboardingFlowView(
+                    mode: onboardingMode,
                     existingSelf: selfPersonQuery.first,
                     onComplete: finishOnboarding,
                     onSkip: finishOnboarding
@@ -62,6 +63,10 @@ struct ContentView: View {
             hasCompleted: onboardingHasCompleted,
             isReplayRequested: onboardingReplayRequested
         ).shouldPresent(hasRegisteredSelf: !selfPersonQuery.isEmpty)
+    }
+
+    private var onboardingMode: OnboardingMode {
+        onboardingReplayRequested && !selfPersonQuery.isEmpty ? .replay : .firstRun
     }
 
     private func requestOnboardingReplay() {
