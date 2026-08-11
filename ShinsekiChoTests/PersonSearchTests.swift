@@ -148,14 +148,14 @@ final class PersonSearchTests: XCTestCase {
 
     func testBreadcrumbIntermediateRelationNoteMatch() {
         let selfPerson = Person(name: "自分", isSelf: true)
-        let spouse = Person(name: "美咲", relationNote: "配偶者")
+        let spouse = Person(name: "美咲", relationNote: "妻")
         let spouseParent = Person(name: "修一", relationNote: "義父")
         XCTAssertTrue(RelationshipManager.setSpouse(selfPerson, spouse))
         XCTAssertTrue(RelationshipManager.addParentChild(parent: spouseParent, child: spouse))
 
         XCTAssertEqual(
-            search([spouseParent], selfPerson: selfPerson, query: "配偶者").first?.primaryMatchReason,
-            .relationshipPath("配偶者")
+            search([spouseParent], selfPerson: selfPerson, query: "妻").first?.primaryMatchReason,
+            .relationshipPath("妻")
         )
     }
 

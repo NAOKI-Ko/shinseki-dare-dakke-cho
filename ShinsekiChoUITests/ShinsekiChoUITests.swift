@@ -167,7 +167,7 @@ final class ShinsekiChoUITests: XCTestCase {
     let app = launch(seed: true)
     app.buttons["集まり"].tap()
 
-    let gathering = element("gathering.cell.親族の集まり", in: app)
+    let gathering = element("gathering.cell.祖母の一周忌", in: app)
     XCTAssertTrue(gathering.waitForExistence(timeout: 5))
     gathering.swipeLeft()
 
@@ -175,13 +175,15 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(swipeDelete.waitForExistence(timeout: 3))
     swipeDelete.tap()
 
-    let confirmDelete = app.buttons["gathering.delete.confirm"]
+    let confirmDelete = app.buttons["gathering.delete.confirm"].firstMatch
     XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3))
     let deletionMessage = app.descendants(matching: .any).matching(
       NSPredicate(format: "label CONTAINS %@", "人物の記録は削除されません")
     ).firstMatch
     XCTAssertTrue(deletionMessage.exists)
-    app.buttons["キャンセル"].tap()
+    // iOS 26 SimulatorではconfirmationDialogのcancel actionが
+    // XCUITestのaccessibility treeに公開されない場合があるため表示位置をタップする。
+    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.94)).tap()
     XCTAssertTrue(gathering.waitForExistence(timeout: 3))
 
     gathering.swipeLeft()
