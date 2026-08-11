@@ -41,6 +41,11 @@ struct ShinsekiChoApp: App {
             if arguments.contains("-ui-testing-seed") {
                 try Self.seedUITestData(in: container.mainContext)
             }
+            #if DEBUG
+            if let performanceSize = PerformanceFixtureSize.launchArgument(in: arguments) {
+                try PerformanceFixtureBuilder.build(performanceSize, in: container.mainContext)
+            }
+            #endif
             self.container = container
 
             #if DEBUG

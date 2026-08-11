@@ -1567,4 +1567,140 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertEqual(personName.label, "佐藤 健太")
     XCTAssertTrue((personName.value as? String)?.contains("続柄") == true)
   }
+
+  func testPerformanceMediumListSearchDetailAndGraphRemainInteractive() {
+    let launchStart = Date()
+    let app = launch(
+      additionalArguments: [
+        "-ui-testing-performance-medium",
+        "-ui-testing-family-graph-ux"
+      ]
+    )
+    let canvas = element("connectionMap.home.canvas", in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 12))
+    print("PERF_UI medium launch \(Date().timeIntervalSince(launchStart)) seconds")
+
+    let listStart = Date()
+    showList(in: app)
+    XCTAssertTrue(app.scrollViews.firstMatch.waitForExistence(timeout: 5))
+    print("PERF_UI medium list \(Date().timeIntervalSince(listStart)) seconds")
+    let searchField = app.searchFields.firstMatch
+    XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+    let searchStart = Date()
+    searchField.tap()
+    searchField.typeText("横浜 健太")
+    let result = element("person.cell.佐藤 健太", in: app)
+    XCTAssertTrue(result.waitForExistence(timeout: 5))
+    print("PERF_UI medium search \(Date().timeIntervalSince(searchStart)) seconds")
+    let detailStart = Date()
+    result.tap()
+    XCTAssertTrue(app.navigationBars["佐藤 健太"].waitForExistence(timeout: 5))
+    print("PERF_UI medium detail \(Date().timeIntervalSince(detailStart)) seconds")
+    app.navigationBars.buttons.firstMatch.tap()
+
+    let returnedSearchField = app.searchFields.firstMatch
+    let clearButton = returnedSearchField.buttons.firstMatch
+    XCTAssertTrue(clearButton.waitForExistence(timeout: 3))
+    clearButton.tap()
+    showMap(in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+    let graphStart = Date()
+    canvas.swipeLeft()
+    canvas.pinch(withScale: 0.8, velocity: -0.5)
+    let reset = app.buttons["connectionMap.resetButton"]
+    XCTAssertTrue(reset.waitForExistence(timeout: 5))
+    reset.tap()
+    XCTAssertTrue(element("connectionMap.node.山田 太郎", in: app).exists)
+    print("PERF_UI medium graph interactions \(Date().timeIntervalSince(graphStart)) seconds")
+  }
+
+  func testPerformanceMediumColdLaunchThreeRuns() {
+    for run in 1...3 {
+      let start = Date()
+      let app = launch(
+        additionalArguments: ["-ui-testing-performance-medium"]
+      )
+      XCTAssertTrue(
+        element("connectionMap.home.canvas", in: app).waitForExistence(timeout: 15)
+      )
+      print("PERF_UI cold launch run\(run) \(Date().timeIntervalSince(start)) seconds")
+      app.terminate()
+    }
+  }
+
+  func testPerformanceMediumOpensTenPhotoPersonDetails() {
+    let app = launch(
+      additionalArguments: ["-ui-testing-performance-medium"]
+    )
+    showList(in: app)
+    let names = [
+      "山田 太郎", "佐藤 美咲", "山田 一郎", "山田 花子", "佐藤 修一",
+      "佐藤 恵子", "山田 葵", "山田 湊", "山田 次郎", "佐藤 健太"
+    ]
+    let start = Date()
+    for name in names {
+      let searchField = app.searchFields.firstMatch
+      searchField.tap()
+      searchField.typeText(name)
+      let cell = element("person.cell.\(name)", in: app)
+      XCTAssertTrue(cell.waitForExistence(timeout: 8), name)
+      cell.tap()
+      XCTAssertTrue(app.navigationBars[name].waitForExistence(timeout: 5), name)
+      app.navigationBars.buttons.firstMatch.tap()
+      let returnedSearch = app.searchFields.firstMatch
+      XCTAssertTrue(returnedSearch.buttons.firstMatch.waitForExistence(timeout: 3), name)
+      returnedSearch.buttons.firstMatch.tap()
+    }
+    print("PERF_UI medium ten details \(Date().timeIntervalSince(start)) seconds")
+  }
+
+  func testPerformanceStressSmokeRemainsInteractive() {
+    let launchStart = Date()
+    let app = launch(
+      additionalArguments: [
+        "-ui-testing-performance-stress",
+        "-ui-testing-family-graph-ux"
+      ]
+    )
+    let canvas = element("connectionMap.home.canvas", in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 15))
+    print("PERF_UI stress launch \(Date().timeIntervalSince(launchStart)) seconds")
+
+    showList(in: app)
+    XCTAssertTrue(app.scrollViews.firstMatch.waitForExistence(timeout: 8))
+    app.swipeUp()
+    app.swipeUp()
+    app.swipeDown()
+
+    let searchField = app.searchFields.firstMatch
+    let searchStart = Date()
+    searchField.tap()
+    searchField.typeText("登山")
+    XCTAssertTrue(element("person.cell.佐藤 健太", in: app).waitForExistence(timeout: 8))
+    print("PERF_UI stress search \(Date().timeIntervalSince(searchStart)) seconds")
+    searchField.buttons.firstMatch.tap()
+    showMap(in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 8))
+    canvas.swipeRight()
+    canvas.pinch(withScale: 1.2, velocity: 0.5)
+    let reset = app.buttons["connectionMap.resetButton"]
+    XCTAssertTrue(reset.waitForExistence(timeout: 5))
+    reset.tap()
+    XCTAssertTrue(element("connectionMap.node.山田 太郎", in: app).exists)
+  }
+
+  func testPerformanceStressGatheringPrepRemainsInteractive() {
+    let app = launch(
+      additionalArguments: ["-ui-testing-performance-stress"]
+    )
+    app.buttons["集まり"].tap()
+    let gathering = element("gathering.cell.祖父の法事", in: app)
+    XCTAssertTrue(gathering.waitForExistence(timeout: 8))
+    gathering.tap()
+    let prepButton = app.buttons["gathering.prepButton"]
+    XCTAssertTrue(prepButton.waitForExistence(timeout: 5))
+    prepButton.tap()
+    XCTAssertTrue(element("gatheringPrep.root", in: app).waitForExistence(timeout: 8))
+    XCTAssertTrue(element("gatheringPrep.next", in: app).exists)
+  }
 }
