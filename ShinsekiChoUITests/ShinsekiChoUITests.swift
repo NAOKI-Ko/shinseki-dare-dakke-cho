@@ -147,6 +147,51 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertFalse(element("onboarding.welcome", in: app).exists)
   }
 
+  func testGatheringEmptyStateOffersAddAction() {
+    let app = launch()
+    XCTAssertTrue(app.buttons["onboarding.skip"].waitForExistence(timeout: 5))
+    app.buttons["onboarding.skip"].tap()
+
+    app.buttons["集まり"].tap()
+    XCTAssertTrue(app.staticTexts["まだ集まりがありません"].waitForExistence(timeout: 5))
+
+    let addButton = app.buttons["gathering.empty.add"]
+    XCTAssertTrue(addButton.exists)
+    addButton.tap()
+
+    XCTAssertTrue(app.navigationBars["集まりを追加"].waitForExistence(timeout: 5))
+    XCTAssertFalse(app.staticTexts["フルアクセス"].exists)
+  }
+
+  func testGatheringDeletionRequiresConfirmation() {
+    let app = launch(seed: true)
+    app.buttons["集まり"].tap()
+
+    let gathering = element("gathering.cell.親族の集まり", in: app)
+    XCTAssertTrue(gathering.waitForExistence(timeout: 5))
+    gathering.swipeLeft()
+
+    let swipeDelete = app.buttons["削除"]
+    XCTAssertTrue(swipeDelete.waitForExistence(timeout: 3))
+    swipeDelete.tap()
+
+    let confirmDelete = app.buttons["gathering.delete.confirm"]
+    XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3))
+    let deletionMessage = app.descendants(matching: .any).matching(
+      NSPredicate(format: "label CONTAINS %@", "人物の記録は削除されません")
+    ).firstMatch
+    XCTAssertTrue(deletionMessage.exists)
+    app.buttons["キャンセル"].tap()
+    XCTAssertTrue(gathering.waitForExistence(timeout: 3))
+
+    gathering.swipeLeft()
+    XCTAssertTrue(swipeDelete.waitForExistence(timeout: 3))
+    swipeDelete.tap()
+    XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3))
+    confirmDelete.tap()
+    XCTAssertFalse(gathering.waitForExistence(timeout: 3))
+  }
+
   func testSettingsCanReplayOnboarding() {
     let app = launch(seed: true)
     XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))

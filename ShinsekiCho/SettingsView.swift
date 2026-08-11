@@ -164,7 +164,10 @@ struct SettingsView: View {
             exportFilename = "親戚だれだっけ帳_バックアップ_\(Self.filenameDateFormatter.string(from: .now))"
             showingBackupExporter = true
         } catch {
-            backupAlert = .error("バックアップを書き出せません", error.localizedDescription)
+            backupAlert = .error(
+                "バックアップを書き出せません",
+                "ファイルを作成できませんでした。保存先を確認して、もう一度お試しください。"
+            )
         }
     }
 
@@ -184,7 +187,10 @@ struct SettingsView: View {
                     plan: BackupRestorePlan(archive: archive)
                 )
             } catch {
-                backupAlert = .error("このバックアップは復元できません", error.localizedDescription)
+                backupAlert = .error(
+                    "このバックアップは復元できません",
+                    "バックアップの内容を確認して、もう一度お試しください。"
+                )
             }
             return
         }
@@ -214,8 +220,15 @@ struct SettingsView: View {
             try BackupRestoreService.restore(plan: plan, in: context)
             restorePresentation = nil
             backupAlert = .success("復元が完了しました", "人物・関係・集まりをバックアップの内容へ置き換えました。")
-        } catch {
+        } catch let error as BackupRestoreError {
             backupAlert = .error("復元できませんでした", error.localizedDescription)
+        } catch let error as BackupValidationError {
+            backupAlert = .error("復元できませんでした", error.localizedDescription)
+        } catch {
+            backupAlert = .error(
+                "復元できませんでした",
+                "現在の記録は変更されていません。もう一度お試しください。"
+            )
         }
     }
 
@@ -301,7 +314,7 @@ private struct BackupRestorePreviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("あとで") { dismiss() }
+                    Button("キャンセル") { dismiss() }
                         .accessibilityIdentifier("backup.preview.cancel")
                 }
             }

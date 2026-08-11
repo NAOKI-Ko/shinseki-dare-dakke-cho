@@ -9,6 +9,7 @@ struct GatheringListView: View {
 
     @State private var showingAddSheet = false
     @State private var showingPurchaseSheet = false
+    @State private var pendingDeletion: Gathering?
 
     var body: some View {
         NavigationStack {
@@ -18,7 +19,7 @@ struct GatheringListView: View {
                         Image(systemName: "person.3.sequence")
                             .font(.system(size: 40))
                             .foregroundStyle(AppTheme.ai.opacity(0.5))
-                        Text("まだ登録がありません")
+                        Text("まだ集まりがありません")
                             .font(.minchoTitle(18, relativeTo: .title3))
                             .foregroundStyle(AppTheme.ink)
                         Text("法事や帰省などの集まりを登録すると、誰が来たかをあとで確認できます。")
@@ -26,6 +27,14 @@ struct GatheringListView: View {
                             .foregroundStyle(AppTheme.inkSoft)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 40)
+                        Button {
+                            requestAddingGathering()
+                        } label: {
+                            Label("集まりを追加", systemImage: "plus")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(AppTheme.ai)
+                        .accessibilityIdentifier("gathering.empty.add")
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(AppTheme.paper)
@@ -52,7 +61,8 @@ struct GatheringListView: View {
                                 showingPurchaseSheet = true
                                 return
                             }
-                            for i in offsets { context.delete(gatherings[i]) }
+                            guard let index = offsets.first else { return }
+                            pendingDeletion = gatherings[index]
                         }
                     }
                     .scrollContentBackground(.hidden)
@@ -66,11 +76,7 @@ struct GatheringListView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        if trialManager.canEdit {
-                            showingAddSheet = true
-                        } else {
-                            showingPurchaseSheet = true
-                        }
+                        requestAddingGathering()
                     } label: { Image(systemName: "plus") }
                         .accessibilityLabel("集まりを追加")
                 }
@@ -81,6 +87,32 @@ struct GatheringListView: View {
             .sheet(isPresented: $showingPurchaseSheet) {
                 PurchaseSheet()
             }
+            .confirmationDialog(
+                "集まりを削除しますか？",
+                isPresented: Binding(
+                    get: { pendingDeletion != nil },
+                    set: { if !$0 { pendingDeletion = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingDeletion
+            ) { gathering in
+                Button("集まりを削除", role: .destructive) {
+                    context.delete(gathering)
+                    pendingDeletion = nil
+                }
+                .accessibilityIdentifier("gathering.delete.confirm")
+                Button("キャンセル", role: .cancel) {}
+            } message: { gathering in
+                Text("「\(gathering.title)」と出席者の関連を削除します。人物の記録は削除されません。")
+            }
+        }
+    }
+
+    private func requestAddingGathering() {
+        if trialManager.canEdit {
+            showingAddSheet = true
+        } else {
+            showingPurchaseSheet = true
         }
     }
 }
@@ -113,7 +145,7 @@ struct GatheringFormView: View {
             }
             .scrollContentBackground(.hidden)
             .background(AppTheme.paper)
-            .navigationTitle(gatheringToEdit == nil ? "集まりを追加" : "編集")
+            .navigationTitle(gatheringToEdit == nil ? "集まりを追加" : "集まりを編集")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }

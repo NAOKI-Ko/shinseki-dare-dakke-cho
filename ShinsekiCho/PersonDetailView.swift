@@ -84,7 +84,7 @@ struct PersonDetailView: View {
                 } label: {
                     Label("重複した人物を統合", systemImage: "person.2.badge.gearshape")
                 }
-                .foregroundStyle(AppTheme.attention)
+                .foregroundStyle(AppTheme.inkSoft)
                 .accessibilityIdentifier("personDetail.mergeDuplicate")
             } footer: {
                 Text("同じ人物を重複して登録した場合に、確認しながら1人へまとめます。自動では統合されません。")
@@ -426,17 +426,23 @@ struct RelationEditorView: View {
         allPersons.filter { $0.persistentModelID != person.persistentModelID }
     }
 
+    private func linkCandidates(for kind: RelationshipKind) -> [Person] {
+        candidates.filter {
+            RelationshipManager.canLink(kind, person: person, relative: $0)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 Section("配偶者") {
                     if let spouse = person.spouse {
                         relationshipRow(kind: .spouse, relative: spouse)
+                    } else if linkCandidates(for: .spouse).isEmpty {
+                        unavailableCandidateRow(for: .spouse)
                     } else {
                         Menu("配偶者を選ぶ") {
-                            ForEach(candidates.filter {
-                                RelationshipManager.canLink(.spouse, person: person, relative: $0)
-                            }) { candidate in
+                            ForEach(linkCandidates(for: .spouse)) { candidate in
                                 Button(candidate.name) {
                                     performEdit({
                                         try RelationshipManager.link(
@@ -469,17 +475,19 @@ struct RelationEditorView: View {
                         relationshipRow(kind: .parent, relative: parent)
                     }
                     if person.parents.count < 2 {
-                        Menu("親を追加") {
-                            ForEach(candidates.filter {
-                                RelationshipManager.canLink(.parent, person: person, relative: $0)
-                            }) { candidate in
-                                Button(candidate.name) {
-                                    performEdit {
-                                        try RelationshipManager.link(
-                                            .parent,
-                                            person: person,
-                                            relative: candidate
-                                        )
+                        if linkCandidates(for: .parent).isEmpty {
+                            unavailableCandidateRow(for: .parent)
+                        } else {
+                            Menu("親を追加") {
+                                ForEach(linkCandidates(for: .parent)) { candidate in
+                                    Button(candidate.name) {
+                                        performEdit {
+                                            try RelationshipManager.link(
+                                                .parent,
+                                                person: person,
+                                                relative: candidate
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -492,12 +500,14 @@ struct RelationEditorView: View {
                     ForEach(person.children) { child in
                         relationshipRow(kind: .child, relative: child)
                     }
-                    Menu("子を追加") {
-                        ForEach(candidates.filter {
-                            RelationshipManager.canLink(.child, person: person, relative: $0)
-                        }) { candidate in
-                            Button(candidate.name) {
-                                pendingChildCandidate = candidate
+                    if linkCandidates(for: .child).isEmpty {
+                        unavailableCandidateRow(for: .child)
+                    } else {
+                        Menu("子を追加") {
+                            ForEach(linkCandidates(for: .child)) { candidate in
+                                Button(candidate.name) {
+                                    pendingChildCandidate = candidate
+                                }
                             }
                         }
                     }
@@ -590,6 +600,18 @@ struct RelationEditorView: View {
                 Text("共同の子にする場合だけ、配偶者との親子関係も追加します。")
             }
         }
+    }
+
+    @ViewBuilder
+    private func unavailableCandidateRow(for kind: RelationshipKind) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("追加できる\(kind.displayName)がいません")
+                .foregroundStyle(AppTheme.ink)
+            Text("人物を登録するか、既存の関係を確認してください。")
+                .font(.caption)
+                .foregroundStyle(AppTheme.inkSoft)
+        }
+        .accessibilityIdentifier("relationship.empty.\(kind.rawValue)")
     }
 
     @ViewBuilder
@@ -1003,7 +1025,7 @@ struct PersonMergePreviewView: View {
                 set: { if !$0 { errorMessage = nil } }
             )
         ) {
-            Button("OK", role: .cancel) {}
+            Button("閉じる", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
