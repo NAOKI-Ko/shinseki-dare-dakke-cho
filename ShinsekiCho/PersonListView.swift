@@ -3,6 +3,7 @@ import SwiftData
 import PhotosUI
 
 struct PersonListView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: [SortDescriptor(\Person.kana), SortDescriptor(\Person.name)])
     private var persons: [Person]
     @Query(filter: #Predicate<Person> { $0.isSelf })
@@ -11,7 +12,12 @@ struct PersonListView: View {
     @Binding var searchText: String
     var onRegisterSelf: () -> Void = {}
 
-    private let columns = [GridItem(.adaptive(minimum: 92), spacing: 14)]
+    private var columns: [GridItem] {
+        if dynamicTypeSize.isAccessibilitySize {
+            return [GridItem(.flexible(), spacing: 14)]
+        }
+        return [GridItem(.adaptive(minimum: 92), spacing: 14)]
+    }
 
     private var searchResults: [PersonSearchResult] {
         PersonSearchEngine.search(
@@ -35,6 +41,7 @@ struct PersonListView: View {
                     Image(systemName: "person.badge.plus")
                         .font(.system(size: 40))
                         .foregroundStyle(AppTheme.ai.opacity(0.5))
+                        .accessibilityHidden(true)
                     Text("まず自分を登録しましょう")
                         .font(.minchoTitle(18, relativeTo: .title3))
                         .foregroundStyle(AppTheme.ink)
@@ -75,6 +82,7 @@ struct PersonListView: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("person.cell.\(result.person.name)")
+                            .accessibilityLabel(personAccessibilityLabel(for: result))
                             .accessibilityValue(
                                 PersonPhotoSupport.image(from: result.person.photoData) == nil
                                     ? "写真なし"
@@ -88,56 +96,91 @@ struct PersonListView: View {
             }
         }
     }
+
+    private func personAccessibilityLabel(for result: PersonSearchResult) -> String {
+        var parts = [result.person.name]
+        if !result.person.relationNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append("続柄、\(result.person.relationNote)")
+        }
+        if isSearching, let reason = result.primaryMatchReason?.displayText {
+            parts.append("一致した手掛かり、\(reason)")
+        }
+        return parts.joined(separator: "、")
+    }
 }
 
 // MARK: - グリッドの1マス
 
 private struct PersonGridCell: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let person: Person
     let searchReason: String?
 
     var body: some View {
-        VStack(spacing: 6) {
-            Group {
-                if let uiImage = PersonPhotoSupport.image(from: person.photoData) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    ZStack {
-                        Circle().fill(AppTheme.ai.opacity(0.08))
-                        Text(PersonPhotoSupport.initial(for: person.name))
-                            .font(.minchoTitle(24, relativeTo: .title2))
-                            .foregroundStyle(AppTheme.ai)
-                    }
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                HStack(alignment: .top, spacing: 14) {
+                    photo
+                    labels(alignment: .leading)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(spacing: 6) {
+                    photo
+                    labels(alignment: .center)
+                }
+                .frame(width: 92)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var photo: some View {
+        Group {
+            if let uiImage = PersonPhotoSupport.image(from: person.photoData) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    Circle().fill(AppTheme.ai.opacity(0.08))
+                    Text(PersonPhotoSupport.initial(for: person.name))
+                        .font(.minchoTitle(24, relativeTo: .title2))
+                        .foregroundStyle(AppTheme.ai)
                 }
             }
-            .frame(width: 76, height: 76)
-            .clipShape(Circle())
-            .overlay(Circle().stroke(AppTheme.ruleStrong, lineWidth: 1))
+        }
+        .frame(width: 76, height: 76)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(AppTheme.ruleStrong, lineWidth: 1))
+        .accessibilityHidden(true)
+    }
 
+    private func labels(alignment: TextAlignment) -> some View {
+        VStack(alignment: alignment == .leading ? .leading : .center, spacing: 4) {
             Text(person.name)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AppTheme.ink)
-                .lineLimit(1)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
 
             if !person.relationNote.isEmpty {
                 Text(person.relationNote)
                     .font(.caption2)
                     .foregroundStyle(AppTheme.inkSoft)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
             }
 
             if let searchReason {
                 Text(searchReason)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(AppTheme.ai)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .multilineTextAlignment(alignment)
                     .accessibilityIdentifier("person.searchReason.\(person.name)")
             }
         }
-        .frame(width: 92)
     }
 }
 
@@ -361,6 +404,7 @@ struct PersonFormView: View {
         .frame(width: 96, height: 96)
         .clipShape(Circle())
         .overlay(Circle().stroke(AppTheme.ai.opacity(0.35), lineWidth: 1))
+        .accessibilityLabel(photoData == nil ? "写真を選ぶ、任意" : "写真を変更")
     }
 
     private func save() {

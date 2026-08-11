@@ -66,6 +66,15 @@ struct RelativeDraftRow: View {
             }
             .buttonStyle(.plain)
             .disabled(!isEnabled)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            .accessibilityLabel("\(title)を追加")
+            .accessibilityValue(
+                isEnabled
+                    ? (draft.isSelected ? "選択中" : "追加しない")
+                    : "親を先に選択してください"
+            )
+            .accessibilityAddTraits(draft.isSelected ? .isSelected : [])
             .accessibilityIdentifier("onboarding.relative.\(identifier).toggle")
 
             if draft.isSelected {
@@ -78,6 +87,7 @@ struct RelativeDraftRow: View {
                             .stroke(AppTheme.rule, lineWidth: 1)
                     }
                     .accessibilityIdentifier("onboarding.relative.\(identifier).name")
+                    .accessibilityLabel("\(title)の名前")
             }
         }
         .padding(14)

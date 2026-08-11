@@ -51,6 +51,17 @@ struct PersonDetailView: View {
                     .padding(.vertical, 18)
                     .frame(maxWidth: .infinity)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    person.relationNote.isEmpty
+                        ? person.name
+                        : "\(person.name)、続柄、\(person.relationNote)"
+                )
+                .accessibilityValue(
+                    PersonPhotoSupport.image(from: person.photoData) == nil
+                        ? "写真なし"
+                        : "写真あり"
+                )
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 .listRowBackground(Color.clear)
             }
@@ -149,7 +160,9 @@ struct PersonDetailView: View {
                     LabeledContent("アレルギー・食事の配慮", value: person.dietaryNotes)
                         .foregroundStyle(AppTheme.attention)
                         .accessibilityIdentifier("personDetail.dietaryNotes")
-                        .accessibilityValue("AppTheme.attention")
+                        .accessibilityLabel(
+                            "アレルギー・食事の配慮、\(person.dietaryNotes)、注意"
+                        )
                 }
                 if allProfileFieldsEmpty {
                     Text("「編集」から、居住地や誕生日などを登録できます。")
@@ -301,6 +314,7 @@ struct PersonDetailView: View {
 }
 
 struct PersonMemorySummaryView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let summary: PersonMemorySummary
 
     var body: some View {
@@ -309,6 +323,7 @@ struct PersonMemorySummaryView: View {
                 Label("この人を思い出す", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.minchoAmount(15, relativeTo: .headline).weight(.semibold))
                     .foregroundStyle(AppTheme.ink)
+                    .accessibilityAddTraits(.isHeader)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("自分とのつながり")
@@ -333,6 +348,7 @@ struct PersonMemorySummaryView: View {
                             .padding(.vertical, 3)
                             .background(AppTheme.ai.opacity(0.08), in: Capsule())
                             .accessibilityIdentifier("personMemory.structuredRelation")
+                            .accessibilityLabel("続柄、\(label)")
                     }
                 }
 
@@ -395,7 +411,7 @@ struct PersonMemorySummaryView: View {
             Text(value)
                 .font(.subheadline)
                 .foregroundStyle(AppTheme.ink)
-                .lineLimit(lineLimit)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : lineLimit)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier(identifier)
                 .accessibilityLabel("\(title)、\(value)")
@@ -409,6 +425,7 @@ struct RelationEditorView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(TrialManager.self) private var trialManager
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var person: Person
     var onRelationshipChange: () -> Void = {}
 
@@ -625,36 +642,65 @@ struct RelationEditorView: View {
                     .foregroundStyle(AppTheme.ink)
                 Spacer()
             }
-            HStack(spacing: 16) {
-                Spacer()
-                Button("関係を変更") {
-                    replacementRequest = RelationshipCorrectionRequest(
-                        kind: kind,
-                        person: person,
-                        relative: relative
-                    )
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        relationshipChangeButton(kind: kind, relative: relative)
+                        relationshipUnlinkButton(kind: kind, relative: relative)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                } else {
+                    HStack(spacing: 16) {
+                        Spacer()
+                        relationshipChangeButton(kind: kind, relative: relative)
+                        relationshipUnlinkButton(kind: kind, relative: relative)
+                    }
                 }
-                .font(.caption)
-                .foregroundStyle(AppTheme.ai)
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier(
-                    "relationship.change.\(kind.rawValue).\(relative.name)"
-                )
-
-                Button("関係を解除", role: .destructive) {
-                    pendingUnlink = RelationshipCorrectionRequest(
-                        kind: kind,
-                        person: person,
-                        relative: relative
-                    )
-                }
-                .font(.caption)
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier(
-                    "relationship.unlink.\(kind.rawValue).\(relative.name)"
-                )
             }
         }
+    }
+
+    private func relationshipChangeButton(
+        kind: RelationshipKind,
+        relative: Person
+    ) -> some View {
+        Button("関係を変更") {
+            replacementRequest = RelationshipCorrectionRequest(
+                kind: kind,
+                person: person,
+                relative: relative
+            )
+        }
+        .font(.caption)
+        .foregroundStyle(AppTheme.ai)
+        .buttonStyle(.borderless)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityLabel("\(relative.name)さんとの\(kind.displayName)関係を変更")
+        .accessibilityIdentifier(
+            "relationship.change.\(kind.rawValue).\(relative.name)"
+        )
+    }
+
+    private func relationshipUnlinkButton(
+        kind: RelationshipKind,
+        relative: Person
+    ) -> some View {
+        Button("関係を解除", role: .destructive) {
+            pendingUnlink = RelationshipCorrectionRequest(
+                kind: kind,
+                person: person,
+                relative: relative
+            )
+        }
+        .font(.caption)
+        .buttonStyle(.borderless)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityLabel("\(relative.name)さんとの\(kind.displayName)関係を解除")
+        .accessibilityIdentifier(
+            "relationship.unlink.\(kind.rawValue).\(relative.name)"
+        )
     }
 
     private func unlinkRelationship(_ request: RelationshipCorrectionRequest) {
@@ -1085,6 +1131,11 @@ struct PersonMergePreviewView: View {
             }
         }
         .buttonStyle(.plain)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityLabel("\(title)、\(value)")
+        .accessibilityValue(choices[field] == side ? "選択中" : "未選択")
+        .accessibilityAddTraits(choices[field] == side ? .isSelected : [])
         .accessibilityIdentifier("personMerge.conflict.\(field.rawValue).\(side.rawValue)")
     }
 
@@ -1151,6 +1202,17 @@ struct SharedChildrenLinkSheet: View {
                             }
                         }
                         .buttonStyle(.plain)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                        .accessibilityLabel("\(child.name)、共同の子として紐づける")
+                        .accessibilityValue(
+                            selectedIDs.contains(child.persistentModelID)
+                                ? "選択中"
+                                : "未選択"
+                        )
+                        .accessibilityAddTraits(
+                            selectedIDs.contains(child.persistentModelID) ? .isSelected : []
+                        )
                         .accessibilityIdentifier("sharedChild.candidate.\(child.name)")
                     }
                 }

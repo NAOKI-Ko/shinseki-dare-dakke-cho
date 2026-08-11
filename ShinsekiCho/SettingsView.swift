@@ -299,6 +299,9 @@ private struct BackupRestorePreviewView: View {
                     Text("現在の記録は、このバックアップの内容に置き換わります。")
                         .foregroundStyle(AppTheme.attention)
                         .accessibilityIdentifier("backup.preview.warning")
+                        .accessibilityLabel(
+                            "警告、現在の記録は、このバックアップの内容に置き換わります"
+                        )
                 }
                 .listRowBackground(AppTheme.paperRaised)
 
@@ -306,6 +309,9 @@ private struct BackupRestorePreviewView: View {
                     showingFinalConfirmation = true
                 }
                 .foregroundStyle(AppTheme.attention)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+                .accessibilityHint("復元前の最終確認を表示します")
                 .accessibilityIdentifier("backup.preview.confirm")
             }
             .scrollContentBackground(.hidden)

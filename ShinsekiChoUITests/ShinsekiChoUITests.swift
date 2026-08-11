@@ -8,11 +8,19 @@ final class ShinsekiChoUITests: XCTestCase {
   private func launch(
     reset: Bool = true,
     seed: Bool = false,
+    interfaceStyle: String = "Light",
+    contentSizeCategory: String? = nil,
     additionalArguments: [String] = []
   ) -> XCUIApplication {
     let app = XCUIApplication()
     var arguments: [String] = []
-    arguments.append(contentsOf: ["-ui-testing", "-AppleInterfaceStyle", "Light"])
+    arguments.append(contentsOf: ["-ui-testing", "-AppleInterfaceStyle", interfaceStyle])
+    if let contentSizeCategory {
+      arguments.append(contentsOf: [
+        "-UIPreferredContentSizeCategoryName",
+        contentSizeCategory
+      ])
+    }
     if reset { arguments.append("-ui-testing-reset") }
     if seed { arguments.append("-ui-testing-seed") }
     arguments.append(contentsOf: additionalArguments)
@@ -1466,6 +1474,7 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(element("backup.preview.people", in: app).waitForExistence(timeout: 5))
     XCTAssertTrue(element("backup.preview.gatherings", in: app).exists)
     XCTAssertTrue(element("backup.preview.warning", in: app).exists)
+    XCTAssertTrue(element("backup.preview.warning", in: app).label.contains("警告"))
     XCTAssertTrue(app.buttons["backup.preview.confirm"].exists)
     app.buttons["backup.preview.cancel"].tap()
 
@@ -1473,5 +1482,89 @@ final class ShinsekiChoUITests: XCTestCase {
     reveal(selfName, in: app)
     XCTAssertTrue(selfName.waitForExistence(timeout: 5))
     XCTAssertTrue(selfName.label.contains("山田 太郎"))
+  }
+
+  func testAccessibilityXXXLKeepsPersonDetailAndMemoryActionsReachable() {
+    let app = launch(
+      seed: true,
+      contentSizeCategory: "UICTContentSizeCategoryAccessibilityXXXL",
+      additionalArguments: ["-ui-testing-memory-assist"]
+    )
+    showList(in: app)
+
+    let personCell = element("person.cell.佐藤 健太", in: app)
+    reveal(personCell, in: app)
+    XCTAssertTrue(personCell.waitForExistence(timeout: 5))
+    XCTAssertTrue(personCell.isHittable)
+    XCTAssertTrue(personCell.label.contains("佐藤 健太"))
+    XCTAssertTrue(personCell.label.contains("続柄"))
+    personCell.tap()
+
+    let relationship = element("personMemory.relationship", in: app)
+    XCTAssertTrue(relationship.waitForExistence(timeout: 5))
+    XCTAssertTrue(relationship.label.contains("自分とのつながり"))
+    let relationButton = app.buttons["personDetail.editRelations"]
+    revealInPersonDetail(relationButton, in: app)
+    XCTAssertTrue(relationButton.isHittable)
+    keepScreenshot(app, name: "Phase10_3_DynamicType_XXXL_PersonDetail")
+
+    app.buttons["設定"].tap()
+    XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 5))
+    keepScreenshot(app, name: "Phase10_3_DynamicType_XXXL_Settings")
+  }
+
+  func testDarkModeKeepsPersonDetailGraphAndSettingsReachable() {
+    let app = launch(seed: true, interfaceStyle: "Dark")
+    XCTAssertTrue(element("connectionMap.home.canvas", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(element("connectionMap.node.山田 太郎", in: app).exists)
+    keepScreenshot(app, name: "Phase10_3_Dark_FamilyGraph")
+
+    showList(in: app)
+    let personCell = element("person.cell.山田 太郎", in: app)
+    XCTAssertTrue(personCell.waitForExistence(timeout: 5))
+    keepScreenshot(app, name: "Phase10_3_Dark_PersonList")
+    personCell.tap()
+    XCTAssertTrue(element("personMemory.summary", in: app).waitForExistence(timeout: 5))
+    keepScreenshot(app, name: "Phase10_3_Dark_PersonDetail")
+
+    app.buttons["集まり"].tap()
+    XCTAssertTrue(app.navigationBars["集まり"].waitForExistence(timeout: 5))
+    keepScreenshot(app, name: "Phase10_3_Dark_Gathering")
+
+    app.buttons["設定"].tap()
+    XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 5))
+    XCTAssertTrue(element("settings.trialStatus", in: app).exists)
+    keepScreenshot(app, name: "Phase10_3_Dark_Settings")
+  }
+
+  func testAccessibilityMetadataDescribesGraphAndGatheringPrep() {
+    let app = launch(
+      seed: true,
+      additionalArguments: ["-ui-testing-gathering-prep"]
+    )
+
+    let selfNode = element("connectionMap.node.山田 太郎", in: app)
+    XCTAssertTrue(selfNode.waitForExistence(timeout: 5))
+    XCTAssertTrue(selfNode.label.contains("山田 太郎"))
+    XCTAssertTrue(selfNode.label.contains("自分"))
+    XCTAssertTrue((selfNode.value as? String)?.contains("展開済み") == true)
+    XCTAssertEqual(
+      app.buttons["connectionMap.resetButton"].label,
+      "つながりマップをリセット"
+    )
+
+    app.buttons["集まり"].tap()
+    let gathering = element("gathering.cell.親族の集まり", in: app)
+    XCTAssertTrue(gathering.waitForExistence(timeout: 5))
+    XCTAssertTrue(gathering.label.contains("出席者"))
+    gathering.tap()
+    app.buttons["gathering.prepButton"].tap()
+
+    let progress = element("gatheringPrep.progress", in: app)
+    XCTAssertTrue(progress.waitForExistence(timeout: 5))
+    XCTAssertEqual(progress.value as? String, "全3人中1人目")
+    let personName = element("gatheringPrep.personName", in: app)
+    XCTAssertEqual(personName.label, "佐藤 健太")
+    XCTAssertTrue((personName.value as? String)?.contains("続柄") == true)
   }
 }

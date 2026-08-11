@@ -12,6 +12,7 @@ struct ReplaySelfStep: View {
         ) {
             VStack(spacing: 16) {
                 replayPhoto
+                    .accessibilityHidden(true)
                 ReplayStatusRow(role: "自分", name: snapshot.selfName)
                 guidance
                 nextButton(identifier: "onboarding.replay.self.next")

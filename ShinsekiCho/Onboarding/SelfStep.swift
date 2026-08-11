@@ -16,6 +16,7 @@ struct SelfStep: View {
         ) {
             VStack(spacing: 16) {
                 photoPreview
+                    .accessibilityHidden(true)
 
                 TextField("名前", text: $draft.selfName)
                     .textContentType(.name)
@@ -27,6 +28,7 @@ struct SelfStep: View {
                             .stroke(AppTheme.ruleStrong, lineWidth: 1)
                     }
                     .accessibilityIdentifier("onboarding.self.name")
+                    .accessibilityLabel("自分の名前")
 
                 PhotosPicker(selection: $selectedPhoto, matching: .images) {
                     Label(

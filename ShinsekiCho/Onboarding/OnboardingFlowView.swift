@@ -12,6 +12,8 @@ enum OnboardingStep: Int, CaseIterable {
 struct OnboardingFlowView: View {
     @Environment(TrialManager.self) private var trialManager
     @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let mode: OnboardingMode
     let existingSelf: Person?
@@ -41,24 +43,7 @@ struct OnboardingFlowView: View {
     var body: some View {
         VStack(spacing: 0) {
             if step != .finish {
-                HStack {
-                    if step != .welcome {
-                        Button {
-                            moveBack()
-                        } label: {
-                            Label("戻る", systemImage: "chevron.left")
-                        }
-                        .accessibilityIdentifier("onboarding.back")
-                    }
-                    Spacer()
-                    Text("\(step.rawValue + 1) / 5")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(AppTheme.inkSoft)
-                    Button("スキップ", action: onSkip)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppTheme.inkSoft)
-                        .accessibilityIdentifier("onboarding.skip")
-                }
+                onboardingHeader
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
             }
@@ -123,9 +108,47 @@ struct OnboardingFlowView: View {
     }
 
     private func move(to destination: OnboardingStep) {
-        withAnimation(.easeInOut(duration: 0.22)) {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
             step = destination
         }
+    }
+
+    @ViewBuilder
+    private var onboardingHeader: some View {
+        VStack(spacing: 2) {
+            HStack {
+                if step != .welcome {
+                    Button {
+                        moveBack()
+                    } label: {
+                        Label("戻る", systemImage: "chevron.left")
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("onboarding.back")
+                }
+                Spacer()
+                if !dynamicTypeSize.isAccessibilitySize {
+                    progressLabel
+                }
+                Button("スキップ", action: onSkip)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.inkSoft)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("onboarding.skip")
+            }
+            if dynamicTypeSize.isAccessibilitySize {
+                progressLabel
+            }
+        }
+    }
+
+    private var progressLabel: some View {
+        Text("\(step.rawValue + 1) / 5")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(AppTheme.inkSoft)
+            .accessibilityLabel("オンボーディング、5ステップ中\(step.rawValue + 1)ステップ目")
     }
 
     private func moveBack() {
@@ -208,11 +231,13 @@ struct OnboardingStepLayout<Content: View>: View {
                         .foregroundStyle(AppTheme.ai)
                 }
                 .padding(.top, 24)
+                .accessibilityHidden(true)
 
                 Text(title)
                     .font(.minchoTitle(22, relativeTo: .title2))
                     .foregroundStyle(AppTheme.ink)
                     .multilineTextAlignment(.center)
+                    .accessibilityAddTraits(.isHeader)
 
                 Text(message)
                     .font(.subheadline)

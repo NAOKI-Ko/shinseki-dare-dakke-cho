@@ -74,6 +74,9 @@ enum GatheringPrepBuilder {
 
 struct GatheringPrepView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(filter: #Predicate<Person> { $0.isSelf }) private var selfPeople: [Person]
 
     let gathering: Gathering
@@ -100,6 +103,9 @@ struct GatheringPrepView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AppTheme.ai)
                                 .accessibilityIdentifier("gatheringPrep.progress")
+                                .accessibilityValue(
+                                    "全\(session.count)人中\(session.currentIndex + 1)人目"
+                                )
                         }
 
                         personCard(person)
@@ -167,15 +173,23 @@ struct GatheringPrepView: View {
                 .frame(width: 96, height: 96)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(AppTheme.ai.opacity(0.35), lineWidth: 1.5))
+                .accessibilityHidden(true)
 
                 Text(person.name)
                     .font(.minchoAmount(21, relativeTo: .title2))
                     .foregroundStyle(AppTheme.ink)
                     .accessibilityIdentifier("gatheringPrep.personName")
+                    .accessibilityLabel(person.name)
+                    .accessibilityValue(
+                        person.relationNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? ""
+                            : "続柄、\(person.relationNote)"
+                    )
                 if !person.relationNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(person.relationNote)
                         .font(.subheadline)
                         .foregroundStyle(AppTheme.inkSoft)
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.vertical, 18)
@@ -184,47 +198,70 @@ struct GatheringPrepView: View {
     }
 
     private var navigationControls: some View {
-        HStack(spacing: 12) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    session.movePrevious()
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) {
+                    previousButton
+                    primaryNavigationButton
                 }
-            } label: {
-                Label("前へ", systemImage: "chevron.left")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .disabled(!session.canGoPrevious)
-            .accessibilityIdentifier("gatheringPrep.previous")
-
-            if session.canGoNext {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        session.moveNext()
-                    }
-                } label: {
-                    Label("次へ", systemImage: "chevron.right")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(AppTheme.ai)
-                .accessibilityIdentifier("gatheringPrep.next")
             } else {
-                Button {
-                    dismiss()
-                } label: {
-                    Label("確認を終える", systemImage: "checkmark")
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 12) {
+                    previousButton
+                    primaryNavigationButton
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppTheme.done)
-                .accessibilityIdentifier("gatheringPrep.finish")
             }
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 8)
-        .background(.ultraThinMaterial)
+        .background {
+            if reduceTransparency {
+                AppTheme.paperRaised
+            } else {
+                Rectangle().fill(.ultraThinMaterial)
+            }
+        }
+    }
+
+    private var previousButton: some View {
+        Button {
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                session.movePrevious()
+            }
+        } label: {
+            Label("前へ", systemImage: "chevron.left")
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .disabled(!session.canGoPrevious)
+        .accessibilityIdentifier("gatheringPrep.previous")
+    }
+
+    @ViewBuilder
+    private var primaryNavigationButton: some View {
+        if session.canGoNext {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                    session.moveNext()
+                }
+            } label: {
+                Label("次へ", systemImage: "chevron.right")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppTheme.ai)
+            .accessibilityIdentifier("gatheringPrep.next")
+        } else {
+            Button {
+                dismiss()
+            } label: {
+                Label("確認を終える", systemImage: "checkmark")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppTheme.done)
+            .accessibilityIdentifier("gatheringPrep.finish")
+        }
     }
 }
 

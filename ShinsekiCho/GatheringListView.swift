@@ -4,6 +4,7 @@ import SwiftData
 struct GatheringListView: View {
     @Environment(\.modelContext) private var context
     @Environment(TrialManager.self) private var trialManager
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: [SortDescriptor(\Gathering.date, order: .reverse)])
     private var gatherings: [Gathering]
 
@@ -19,6 +20,7 @@ struct GatheringListView: View {
                         Image(systemName: "person.3.sequence")
                             .font(.system(size: 40))
                             .foregroundStyle(AppTheme.ai.opacity(0.5))
+                            .accessibilityHidden(true)
                         Text("まだ集まりがありません")
                             .font(.minchoTitle(18, relativeTo: .title3))
                             .foregroundStyle(AppTheme.ink)
@@ -44,16 +46,23 @@ struct GatheringListView: View {
                             NavigationLink(value: gathering) {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(gathering.title).font(.body.weight(.semibold))
-                                    HStack(spacing: 8) {
-                                        Text(gathering.date.formatted(.dateTime.year().month().day()))
-                                        if !gathering.place.isEmpty { Text(gathering.place) }
-                                        Text("・出席\(gathering.attendees.count)名")
+                                    Group {
+                                        if dynamicTypeSize.isAccessibilitySize {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                gatheringMetadata(gathering)
+                                            }
+                                        } else {
+                                            HStack(spacing: 8) {
+                                                gatheringMetadata(gathering)
+                                            }
+                                        }
                                     }
                                     .font(.caption)
                                     .foregroundStyle(AppTheme.inkSoft)
                                 }
                             }
                             .accessibilityIdentifier("gathering.cell.\(gathering.title)")
+                            .accessibilityLabel(gatheringAccessibilityLabel(gathering))
                             .listRowBackground(AppTheme.paperRaised)
                         }
                         .onDelete { offsets in
@@ -78,6 +87,8 @@ struct GatheringListView: View {
                     Button {
                         requestAddingGathering()
                     } label: { Image(systemName: "plus") }
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                         .accessibilityLabel("集まりを追加")
                 }
             }
@@ -114,6 +125,23 @@ struct GatheringListView: View {
         } else {
             showingPurchaseSheet = true
         }
+    }
+
+    @ViewBuilder
+    private func gatheringMetadata(_ gathering: Gathering) -> some View {
+        Text(gathering.date.formatted(.dateTime.year().month().day()))
+        if !gathering.place.isEmpty { Text(gathering.place) }
+        Text("出席\(gathering.attendees.count)名")
+    }
+
+    private func gatheringAccessibilityLabel(_ gathering: Gathering) -> String {
+        var parts = [
+            gathering.title,
+            "日付、\(gathering.date.formatted(.dateTime.year().month().day()))"
+        ]
+        if !gathering.place.isEmpty { parts.append("場所、\(gathering.place)") }
+        parts.append("出席者、\(gathering.attendees.count)名")
+        return parts.joined(separator: "、")
     }
 }
 
@@ -181,6 +209,7 @@ struct GatheringFormView: View {
 struct GatheringDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(TrialManager.self) private var trialManager
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var gathering: Gathering
     @State private var showingAddAttendee = false
     @State private var showingPurchaseSheet = false
@@ -225,15 +254,23 @@ struct GatheringDetailView: View {
             Section {
                 ForEach(gathering.attendees) { person in
                     NavigationLink(value: person) {
-                        HStack {
-                            Text(person.name)
-                            if !person.relationNote.isEmpty {
-                                Text(person.relationNote)
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.inkSoft)
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    attendeeLabels(person)
+                                }
+                            } else {
+                                HStack {
+                                    attendeeLabels(person)
+                                }
                             }
                         }
                     }
+                    .accessibilityLabel(
+                        person.relationNote.isEmpty
+                            ? person.name
+                            : "\(person.name)、続柄、\(person.relationNote)"
+                    )
                 }
                 .onDelete { offsets in
                     guard trialManager.canEdit else {
@@ -272,6 +309,16 @@ struct GatheringDetailView: View {
         }
         .sheet(isPresented: $showingPurchaseSheet) {
             PurchaseSheet()
+        }
+    }
+
+    @ViewBuilder
+    private func attendeeLabels(_ person: Person) -> some View {
+        Text(person.name)
+        if !person.relationNote.isEmpty {
+            Text(person.relationNote)
+                .font(.caption)
+                .foregroundStyle(AppTheme.inkSoft)
         }
     }
 }

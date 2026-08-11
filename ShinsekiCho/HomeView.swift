@@ -68,6 +68,8 @@ struct HomeView: View {
           } label: {
             Image(systemName: "plus")
           }
+          .frame(minWidth: 44, minHeight: 44)
+          .contentShape(Rectangle())
           .accessibilityLabel("人物を追加")
         }
       }

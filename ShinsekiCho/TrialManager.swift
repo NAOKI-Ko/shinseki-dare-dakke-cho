@@ -378,75 +378,82 @@ struct PurchaseSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                Image(systemName: "book.closed.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(AppTheme.ai)
+            ScrollView {
+                VStack(spacing: 20) {
+                    Image(systemName: "book.closed.fill")
+                        .font(.system(size: 44))
+                        .foregroundStyle(AppTheme.ai)
+                        .accessibilityHidden(true)
 
-                VStack(spacing: 8) {
-                    Text("親戚だれだっけ帳を引き続き使う")
-                        .font(.minchoAmount(22, relativeTo: .title2))
-                        .foregroundStyle(AppTheme.ink)
-                        .multilineTextAlignment(.center)
-                    Text("試用期間の終了後も、登録済みの記録はいつでも閲覧できます。購入すると、人物・関係・集まりの追加と編集が再び使えるようになります。")
-                        .font(.subheadline)
-                        .foregroundStyle(AppTheme.inkSoft)
-                        .multilineTextAlignment(.center)
-                }
-
-                Button {
-                    Task {
-                        await trialManager.purchase()
-                        if trialManager.status == .purchased { dismiss() }
+                    VStack(spacing: 8) {
+                        Text("親戚だれだっけ帳を引き続き使う")
+                            .font(.minchoAmount(22, relativeTo: .title2))
+                            .foregroundStyle(AppTheme.ink)
+                            .multilineTextAlignment(.center)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("試用期間の終了後も、登録済みの記録はいつでも閲覧できます。購入すると、人物・関係・集まりの追加と編集が再び使えるようになります。")
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.inkSoft)
+                            .multilineTextAlignment(.center)
                     }
-                } label: {
-                    Text(trialManager.purchaseButtonText)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(AppTheme.ai)
-                .disabled(
-                    trialManager.isProcessing
-                        || trialManager.productAvailability == .loading
-                )
-                .accessibilityIdentifier("purchase.buyButton")
 
-                Button("購入を復元") {
-                    Task { await trialManager.restorePurchases() }
-                }
-                .disabled(trialManager.isProcessing)
-                .accessibilityIdentifier("purchase.restoreButton")
-
-                if trialManager.isProcessing {
-                    ProgressView("Appleに確認しています…")
-                        .tint(AppTheme.ai)
-                } else if trialManager.productAvailability == .loading {
-                    ProgressView("商品情報を確認しています…")
-                        .tint(AppTheme.ai)
-                        .accessibilityIdentifier("purchase.productLoading")
-                }
-
-                if trialManager.productAvailability == .unavailable,
-                   !trialManager.isProcessing {
-                    Button("商品情報を再読み込み") {
-                        Task { await trialManager.loadProduct(forceReload: true) }
+                    Button {
+                        Task {
+                            await trialManager.purchase()
+                            if trialManager.status == .purchased { dismiss() }
+                        }
+                    } label: {
+                        Text(trialManager.purchaseButtonText)
+                            .frame(maxWidth: .infinity, minHeight: 44)
                     }
-                    .accessibilityIdentifier("purchase.retryProductButton")
-                }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppTheme.ai)
+                    .disabled(
+                        trialManager.isProcessing
+                            || trialManager.productAvailability == .loading
+                    )
+                    .accessibilityIdentifier("purchase.buyButton")
 
-                if let message = trialManager.message {
-                    Text(message)
-                        .font(.footnote)
-                        .foregroundStyle(
-                            trialManager.status == .purchased ? AppTheme.done : AppTheme.inkSoft
-                        )
-                        .multilineTextAlignment(.center)
-                        .accessibilityIdentifier("purchase.message")
-                }
+                    Button("購入を復元") {
+                        Task { await trialManager.restorePurchases() }
+                    }
+                    .frame(minHeight: 44)
+                    .disabled(trialManager.isProcessing)
+                    .accessibilityIdentifier("purchase.restoreButton")
 
-                Spacer(minLength: 0)
+                    if trialManager.isProcessing {
+                        ProgressView("Appleに確認しています…")
+                            .tint(AppTheme.ai)
+                    } else if trialManager.productAvailability == .loading {
+                        ProgressView("商品情報を確認しています…")
+                            .tint(AppTheme.ai)
+                            .accessibilityIdentifier("purchase.productLoading")
+                    }
+
+                    if trialManager.productAvailability == .unavailable,
+                       !trialManager.isProcessing {
+                        Button("商品情報を再読み込み") {
+                            Task { await trialManager.loadProduct(forceReload: true) }
+                        }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("purchase.retryProductButton")
+                    }
+
+                    if let message = trialManager.message {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(
+                                trialManager.status == .purchased ? AppTheme.done : AppTheme.inkSoft
+                            )
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("purchase.message")
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
             }
-            .padding(24)
             .background(AppTheme.paper)
             .navigationTitle("フルアクセス")
             .navigationBarTitleDisplayMode(.inline)

@@ -982,6 +982,35 @@ enum GraphRenderLayer: Double {
   case nodes = 1
 }
 
+private extension View {
+  @ViewBuilder
+  func graphDecorativeLayerAccessibility(
+    identifier: String,
+    value: String
+  ) -> some View {
+    #if DEBUG
+      self
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier(identifier)
+        .accessibilityValue(value)
+    #else
+      self.accessibilityHidden(true)
+    #endif
+  }
+
+  @ViewBuilder
+  func graphNodeLayerAccessibility() -> some View {
+    #if DEBUG
+      self
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("connectionMap.nodeLayer")
+        .accessibilityValue("最前面")
+    #else
+      self.accessibilityElement(children: .contain)
+    #endif
+  }
+}
+
 /// 半透明の家系色や写真より下に、必ず不透明な紙面を敷くための契約。
 enum GraphNodeSurfaceContract {
   static let baseOpacity = 1.0
@@ -1386,7 +1415,10 @@ struct FamilyGraphView: View {
                         lineJoin: .round
                       )
                     )
-                    .animation(.easeInOut(duration: 0.12), value: isIlluminated)
+                    .animation(
+                      reduceMotion ? nil : .easeInOut(duration: 0.12),
+                      value: isIlluminated
+                    )
                     .accessibilityHidden(true)
                 }
               }
@@ -1427,7 +1459,10 @@ struct FamilyGraphView: View {
                         lineJoin: .round
                       )
                     )
-                    .animation(.easeInOut(duration: 0.12), value: isIlluminated)
+                    .animation(
+                      reduceMotion ? nil : .easeInOut(duration: 0.12),
+                      value: isIlluminated
+                    )
                     .accessibilityHidden(true)
                 }
               }
@@ -1435,9 +1470,10 @@ struct FamilyGraphView: View {
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .zIndex(GraphRenderLayer.edges.rawValue)
-          .accessibilityElement(children: .ignore)
-          .accessibilityIdentifier("connectionMap.edgeLayer")
-          .accessibilityValue("最背面")
+          .graphDecorativeLayerAccessibility(
+            identifier: "connectionMap.edgeLayer",
+            value: "最背面"
+          )
 
           ZStack {
             ForEach(renderSnapshot.coupleRenderModel.knots) { knot in
@@ -1455,9 +1491,7 @@ struct FamilyGraphView: View {
                   isFocused: focusedNodeID.map { knot.id.people.contains($0) } ?? false
                 )
                 .position(knotCenter)
-                .accessibilityElement(children: .ignore)
-                .accessibilityIdentifier("connectionMap.knot")
-                .accessibilityLabel("夫婦の結び目")
+                .accessibilityHidden(true)
               }
             }
           }
@@ -1521,7 +1555,12 @@ struct FamilyGraphView: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityIdentifier("connectionMap.node.\(node.person.name)")
-                .accessibilityLabel(node.person.name)
+                .accessibilityLabel(
+                  nodeAccessibilityLabel(
+                    person: node.person,
+                    relationLabel: item.relationLabel
+                  )
+                )
                 .accessibilityValue(
                   nodeAccessibilityValue(
                     node: node,
@@ -1531,6 +1570,12 @@ struct FamilyGraphView: View {
                 )
                 .accessibilityAction {
                   expand(node)
+                }
+                .accessibilityAction(named: Text("詳細を見る")) {
+                  onShowDetail(node.person)
+                }
+                .accessibilityAction(named: Text("家族の追加メニューを開く")) {
+                  presentNodeActions(for: node.person)
                 }
                 .simultaneousGesture(
                   LongPressGesture(minimumDuration: 0.55, maximumDistance: 12)
@@ -1543,9 +1588,7 @@ struct FamilyGraphView: View {
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .zIndex(GraphRenderLayer.nodes.rawValue)
-          .accessibilityElement(children: .contain)
-          .accessibilityIdentifier("connectionMap.nodeLayer")
-          .accessibilityValue("最前面")
+          .graphNodeLayerAccessibility()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
@@ -1577,6 +1620,10 @@ struct FamilyGraphView: View {
           .background(AppTheme.paperRaised, in: Circle())
           .overlay(Circle().stroke(AppTheme.ruleStrong, lineWidth: 1))
       }
+      .frame(minWidth: 44, minHeight: 44)
+      .contentShape(Rectangle())
+      .accessibilityLabel("つながりマップをリセット")
+      .accessibilityHint("拡大率と表示位置を最初の状態へ戻します")
       .accessibilityIdentifier(resetButtonIdentifier)
       .highPriorityGesture(
         TapGesture().onEnded { resetViewport() }
@@ -1587,6 +1634,7 @@ struct FamilyGraphView: View {
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(canvasIdentifier)
     .accessibilityValue(canvasAccessibilityValue)
+    .dynamicTypeSize(...DynamicTypeSize.accessibility2)
     .onDisappear {
       cancelIntroAnimation()
       pathIlluminationToken = UUID()
@@ -1902,6 +1950,23 @@ struct FamilyGraphView: View {
       }
     #endif
     return expansion
+  }
+
+  private func nodeAccessibilityLabel(
+    person: Person,
+    relationLabel: String
+  ) -> String {
+    var parts = [person.name]
+    let note = person.relationNote.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !note.isEmpty {
+      parts.append("続柄、\(note)")
+    } else if !relationLabel.isEmpty {
+      parts.append("自分から見た続柄、\(relationLabel)")
+    }
+    if person.persistentModelID == selfPerson.persistentModelID {
+      parts.append("自分")
+    }
+    return parts.joined(separator: "、")
   }
 
   private func expand(_ node: GraphNode) {
@@ -2692,6 +2757,7 @@ private struct EndpointNodeRings: View {
         isBreathing = true
       }
     }
+    .accessibilityHidden(true)
   }
 }
 
