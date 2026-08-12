@@ -213,7 +213,9 @@ final class ShinsekiChoUITests: XCTestCase {
     replay.tap()
 
     XCTAssertTrue(element("onboarding.welcome", in: app).waitForExistence(timeout: 5))
-    XCTAssertEqual(app.staticTexts["1 / 5"].label, "1 / 5")
+    XCTAssertTrue(
+      app.staticTexts["オンボーディング、5ステップ中1ステップ目"].exists
+    )
     app.buttons["onboarding.skip"].tap()
     XCTAssertTrue(app.buttons["親戚"].waitForExistence(timeout: 5))
   }

@@ -48,6 +48,7 @@
 		C00000000000000000000030 /* DataBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000031 /* DataBackupTests.swift */; };
 		C00000000000000000000040 /* PerformanceFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000041 /* PerformanceFixture.swift */; };
 		C00000000000000000000041 /* PerformanceFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000042 /* PerformanceFixtureTests.swift */; };
+		C00000000000000000000042 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000043 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -109,6 +110,7 @@
 		A00000000000000000000031 /* DataBackupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataBackupTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000041 /* PerformanceFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceFixture.swift; sourceTree = "<group>"; };
 		A00000000000000000000042 /* PerformanceFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceFixtureTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000043 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B00000000000000000000001 /* ShinsekiCho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ShinsekiCho.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000002 /* ShinsekiChoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShinsekiChoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000003 /* ShinsekiChoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShinsekiChoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -197,6 +199,7 @@
 				A00000000000000000000009 /* SettingsView.swift */,
 				A00000000000000000000021 /* Assets.xcassets */,
 				A00000000000000000000013 /* Info.plist */,
+				A00000000000000000000043 /* PrivacyInfo.xcprivacy */,
 			);
 			path = ShinsekiCho;
 			sourceTree = "<group>";
@@ -346,6 +349,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C00000000000000000000020 /* Assets.xcassets in Resources */,
+				C00000000000000000000042 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

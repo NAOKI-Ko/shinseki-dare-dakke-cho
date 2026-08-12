@@ -8,6 +8,7 @@ struct ShinsekiChoApp: App {
 
     init() {
         do {
+            #if DEBUG
             let arguments = ProcessInfo.processInfo.arguments
             let isUITesting = arguments.contains("-ui-testing-reset")
                 || arguments.contains("-ui-testing-seed")
@@ -41,14 +42,11 @@ struct ShinsekiChoApp: App {
             if arguments.contains("-ui-testing-seed") {
                 try Self.seedUITestData(in: container.mainContext)
             }
-            #if DEBUG
             if let performanceSize = PerformanceFixtureSize.launchArgument(in: arguments) {
                 try PerformanceFixtureBuilder.build(performanceSize, in: container.mainContext)
             }
-            #endif
             self.container = container
 
-            #if DEBUG
             if arguments.contains("-ui-testing-reset") {
                 try? KeychainStore().removeValue(forKey: TrialManager.firstLaunchDateKey)
                 UserDefaults.standard.removeObject(forKey: TrialManager.firstLaunchDateKey)
@@ -75,6 +73,7 @@ struct ShinsekiChoApp: App {
                 _trialManager = State(initialValue: TrialManager())
             }
             #else
+            self.container = try ModelContainer(for: Person.self, Gathering.self)
             _trialManager = State(initialValue: TrialManager())
             #endif
         } catch {
@@ -92,6 +91,7 @@ struct ShinsekiChoApp: App {
         .modelContainer(container)
     }
 
+    #if DEBUG
     private static func seedUITestData(in context: ModelContext) throws {
         let selfPerson = Person(
             name: "山田 太郎",
@@ -234,6 +234,7 @@ struct ShinsekiChoApp: App {
         #endif
         try context.save()
     }
+    #endif
 
 }
 
