@@ -1925,6 +1925,9 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(element("person.cell.佐藤 健太", in: app).waitForExistence(timeout: 5))
     XCTAssertTrue(element("person.cell.佐藤 美咲", in: app).exists)
     XCTAssertTrue(element("person.cell.山田 花子", in: app).exists)
+    XCTAssertTrue(element("person.cell.山田 一郎", in: app).exists)
+    XCTAssertTrue(element("person.cell.佐藤 修一", in: app).exists)
+    XCTAssertTrue(element("person.cell.山田 葵", in: app).exists)
     let searchKey = app.keyboards.buttons["検索"]
     if searchKey.exists {
       searchKey.tap()
@@ -1953,6 +1956,12 @@ final class ShinsekiChoUITests: XCTestCase {
     revealInPersonDetail(attendedGathering, in: app)
     XCTAssertTrue(element("personDetail.memo", in: app).waitForExistence(timeout: 5))
     XCTAssertTrue(attendedGathering.waitForExistence(timeout: 5))
+    // 会話メモと最近の集まりを画面の主役にし、つながりマップは画面外へ送る。
+    let detailList = app.collectionViews.firstMatch
+    XCTAssertTrue(detailList.exists)
+    for _ in 0..<4 {
+      detailList.swipeUp(velocity: .fast)
+    }
     sleep(1)
     keepScreenshot(app, name: "raw_05_person_memory")
     app.terminate()
@@ -1960,7 +1969,6 @@ final class ShinsekiChoUITests: XCTestCase {
     app = launch(
       seed: true,
       additionalArguments: [
-        "-ui-testing-backup-preview",
         "-ui-testing-app-store-screenshots",
         "-ui-testing-purchased"
       ]
@@ -1969,8 +1977,8 @@ final class ShinsekiChoUITests: XCTestCase {
     let restoreButton = app.buttons["settings.backup.restore"]
     reveal(restoreButton, in: app)
     XCTAssertTrue(restoreButton.waitForExistence(timeout: 5))
-    restoreButton.tap()
-    XCTAssertTrue(element("backup.preview.people", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["settings.backup.export"].exists)
+    XCTAssertTrue(element("settings.backup.privacy", in: app).exists)
     sleep(1)
     keepScreenshot(app, name: "raw_06_backup")
   }

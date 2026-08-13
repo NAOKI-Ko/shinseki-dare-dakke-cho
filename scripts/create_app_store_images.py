@@ -34,6 +34,10 @@ SLIDES = [
         "title": "「あの人誰だっけ？」を、\nすぐ確認。",
         "subtitle": "自分とのつながりや、前に会った記憶をひと目で。",
         "accent": ATTENTION,
+        "device_width": 1000,
+        "device_y": 690,
+        "device_x": 8,
+        "motif": "left",
     },
     {
         "raw": "02_family-graph.png",
@@ -42,6 +46,10 @@ SLIDES = [
         "title": "親戚のつながりが、\nひと目でわかる。",
         "subtitle": "配偶者や共同子まで、家族の関係を見やすく整理。",
         "accent": INDIGO,
+        "device_width": 1110,
+        "device_y": 680,
+        "device_x": -34,
+        "motif": "constellation",
     },
     {
         "raw": "03_gathering-prep.png",
@@ -50,6 +58,10 @@ SLIDES = [
         "title": "法事や結婚式の前に、\n会う人だけ予習。",
         "subtitle": "集まりに参加する親族を、順番に確認できます。",
         "accent": PLUM,
+        "device_width": 1015,
+        "device_y": 650,
+        "device_x": 24,
+        "motif": "right",
     },
     {
         "raw": "04_search.png",
@@ -58,6 +70,10 @@ SLIDES = [
         "title": "名前を忘れても、\n手がかりから探せる。",
         "subtitle": "続柄、地域、集まり、記憶情報からすばやく検索。",
         "accent": FOREST,
+        "device_width": 1060,
+        "device_y": 700,
+        "device_x": -22,
+        "motif": "left",
     },
     {
         "raw": "05_person-memory.png",
@@ -66,6 +82,10 @@ SLIDES = [
         "title": "前に話したことまで、\n思い出せる。",
         "subtitle": "居住地、会話メモ、最後に会った場所や日付も記録。",
         "accent": ATTENTION,
+        "device_width": 1080,
+        "device_y": 675,
+        "device_x": 22,
+        "motif": "right",
     },
     {
         "raw": "06_backup.png",
@@ -74,6 +94,10 @@ SLIDES = [
         "title": "大切な記録は、\n自分でバックアップ。",
         "subtitle": "データは端末中心。必要なときだけ自分で保存できます。",
         "accent": INDIGO,
+        "device_width": 1040,
+        "device_y": 700,
+        "device_x": -12,
+        "motif": "constellation",
     },
 ]
 
@@ -94,7 +118,7 @@ def font(path: str, size: int, index: int = 0) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(path, size=size, index=index)
 
 
-def make_background(accent: tuple[int, int, int]) -> Image.Image:
+def make_background(accent: tuple[int, int, int], motif: str) -> Image.Image:
     width, height = CANVAS_SIZE
     image = Image.new("RGB", CANVAS_SIZE, PAPER)
     base_draw = ImageDraw.Draw(image)
@@ -107,12 +131,22 @@ def make_background(accent: tuple[int, int, int]) -> Image.Image:
 
     decoration = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
     draw = ImageDraw.Draw(decoration)
-    draw.arc((-380, -440, 860, 800), 8, 132, fill=(*GOLD, 44), width=4)
-    draw.arc((-300, -360, 780, 720), 8, 132, fill=(*accent, 30), width=3)
-    draw.arc((850, 40, 1570, 760), 120, 286, fill=(*accent, 34), width=3)
-    draw.line([(1050, 80), (1190, 220), (1245, 405)], fill=(*GOLD, 35), width=3)
-    for x, y, radius in [(1050, 80, 8), (1190, 220, 7), (1245, 405, 6)]:
-        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(*GOLD, 66))
+    if motif == "left":
+        draw.arc((-390, -360, 900, 930), 4, 138, fill=(*GOLD, 58), width=5)
+        draw.arc((-295, -290, 820, 825), 4, 138, fill=(*accent, 42), width=4)
+        points = [(1030, 60), (1175, 205), (1250, 430)]
+    elif motif == "right":
+        draw.arc((700, -520, 1680, 460), 70, 248, fill=(*GOLD, 58), width=5)
+        draw.arc((770, -430, 1600, 400), 70, 248, fill=(*accent, 42), width=4)
+        points = [(90, 72), (210, 210), (280, 430)]
+    else:
+        draw.arc((-230, -430, 910, 710), 12, 138, fill=(*GOLD, 55), width=5)
+        draw.arc((760, -280, 1540, 500), 110, 292, fill=(*accent, 44), width=4)
+        points = [(1030, 68), (1168, 218), (1242, 420)]
+    draw.line(points, fill=(*GOLD, 48), width=4)
+    for index, (x, y) in enumerate(points):
+        radius = 10 - index
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(*GOLD, 84))
     decoration = decoration.filter(ImageFilter.GaussianBlur(0.35))
     image = Image.alpha_composite(image.convert("RGBA"), decoration)
 
@@ -131,35 +165,54 @@ def draw_header(
     accent: tuple[int, int, int],
 ) -> None:
     draw = ImageDraw.Draw(canvas)
-    tag_font = font(SANS_PATH, 30)
-    main_font = font(MINCHO_PATH, 82)
-    subtitle_font = font(SANS_REGULAR_PATH, 37)
+    tag_font = font(SANS_PATH, 31)
+    main_font = font(MINCHO_PATH, 104)
+    subtitle_font = font(SANS_REGULAR_PATH, 43)
 
     tag_box = draw.textbbox((0, 0), tag, font=tag_font)
     tag_width = tag_box[2] - tag_box[0]
-    capsule = (92, 86, 92 + tag_width + 76, 151)
+    capsule = (84, 58, 84 + tag_width + 82, 128)
     draw.rounded_rectangle(capsule, radius=32, fill=(*accent, 255), outline=(*accent, 255), width=2)
-    draw.text((130, 102), tag, font=tag_font, fill=PAPER_RAISED)
-    draw.line((92, 181, 1228, 181), fill=(*GOLD, 92), width=2)
+    draw.text((125, 76), tag, font=tag_font, fill=PAPER_RAISED)
+    draw.line((84, 154, 1236, 154), fill=(*GOLD, 118), width=3)
 
     draw.multiline_text(
-        (92, 226),
+        (82, 186),
         title,
         font=main_font,
         fill=INK,
-        spacing=15,
+        spacing=5,
     )
-    title_box = draw.multiline_textbbox((92, 226), title, font=main_font, spacing=15)
-    subtitle_y = title_box[3] + 30
-    draw.text((94, subtitle_y), subtitle, font=subtitle_font, fill=INK_SOFT)
+    title_box = draw.multiline_textbbox((82, 186), title, font=main_font, spacing=5)
+    subtitle_y = title_box[3] + 23
+    words: list[str] = []
+    line = ""
+    for character in subtitle:
+        candidate = line + character
+        if draw.textlength(candidate, font=subtitle_font) > 1145 and line:
+            words.append(line)
+            line = character
+        else:
+            line = candidate
+    if line:
+        words.append(line)
+    draw.multiline_text(
+        (86, subtitle_y),
+        "\n".join(words),
+        font=subtitle_font,
+        fill=INK_SOFT,
+        spacing=7,
+    )
 
 
 def paste_device(
     canvas: Image.Image,
     screenshot: Image.Image,
     accent: tuple[int, int, int],
+    screen_width: int,
+    device_y: int,
+    device_x: int,
 ) -> None:
-    screen_width = 918
     screen_height = round(screen_width * CANVAS_SIZE[1] / CANVAS_SIZE[0])
     screen = screenshot.convert("RGB").resize((screen_width, screen_height), Image.Resampling.LANCZOS)
     screen_mask = Image.new("L", screen.size, 0)
@@ -180,8 +233,8 @@ def paste_device(
     )
     frame.paste(screen, (frame_padding, frame_padding), screen_mask)
 
-    x = (CANVAS_SIZE[0] - frame_size[0]) // 2
-    y = 800
+    x = (CANVAS_SIZE[0] - frame_size[0]) // 2 + device_x
+    y = device_y
     shadow = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
     shadow_draw.rounded_rectangle(
@@ -200,7 +253,7 @@ def compose_slide(raw_path: Path, output_path: Path, slide: dict[str, object]) -
         raise ValueError(f"Unexpected screenshot size {screenshot.size}: {raw_path}")
     accent = slide["accent"]
     assert isinstance(accent, tuple)
-    canvas = make_background(accent)
+    canvas = make_background(accent, str(slide["motif"]))
     draw_header(
         canvas,
         str(slide["title"]),
@@ -208,7 +261,14 @@ def compose_slide(raw_path: Path, output_path: Path, slide: dict[str, object]) -
         str(slide["tag"]),
         accent,
     )
-    paste_device(canvas, screenshot, accent)
+    paste_device(
+        canvas,
+        screenshot,
+        accent,
+        int(slide["device_width"]),
+        int(slide["device_y"]),
+        int(slide["device_x"]),
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.convert("RGB").save(output_path, "PNG", optimize=True, compress_level=9)
 

@@ -243,8 +243,9 @@ struct ShinsekiChoApp: App {
             context.insert(searchGathering)
             searchGathering.attendees.append(spouseBrother)
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-app-store-screenshots") {
-                searchGathering.attendees.append(spouse)
-                searchGathering.attendees.append(mother)
+                searchGathering.attendees.append(contentsOf: [
+                    spouse, mother, father, spouseFather, child
+                ])
             }
         }
         #endif
