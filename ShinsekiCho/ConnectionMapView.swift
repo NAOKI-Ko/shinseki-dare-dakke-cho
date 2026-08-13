@@ -600,6 +600,41 @@ enum GraphNodeLODPolicy {
   }
 }
 
+/// 1つの人物珠について、論理座標から画面上の中心・半径・カード配置をまとめて求める。
+/// 線端とNode Viewが別々の補正を持たないためのscreen-space契約。
+struct GraphNodeScreenGeometry: Equatable {
+  let center: CGPoint
+  let radius: CGFloat
+  let cardPosition: CGPoint
+  let visualScale: CGFloat
+  let scaleAnchor: UnitPoint
+
+  static func resolve(
+    logicalCenter: CGPoint,
+    origin: CGPoint,
+    viewport: GraphViewportTransform,
+    focusScale: CGFloat,
+    beadDiameter: CGFloat,
+    cardHeight: CGFloat
+  ) -> GraphNodeScreenGeometry {
+    let lod = GraphNodeLODPolicy.presentation(
+      cameraScale: viewport.scale,
+      focusScale: focusScale
+    )
+    let center = viewport.applying(to: logicalCenter, around: origin)
+    return GraphNodeScreenGeometry(
+      center: center,
+      radius: lod.screenDiameter / 2,
+      cardPosition: CGPoint(
+        x: center.x,
+        y: center.y + (cardHeight - beadDiameter) / 2
+      ),
+      visualScale: lod.screenDiameter / beadDiameter,
+      scaleAnchor: UnitPoint(x: 0.5, y: (beadDiameter / 2) / cardHeight)
+    )
+  }
+}
+
 enum GraphLineLODPolicy {
   static func canvasWidth(screenWidth: CGFloat, cameraScale: CGFloat) -> CGFloat {
     screenWidth / max(abs(cameraScale), 0.0001)
@@ -686,6 +721,28 @@ enum GraphCanvasGeometry {
         y: endCenter.y - unitY * endRadius
       )
     )
+  }
+
+  /// 両端の論理座標を同じviewportで画面座標へ変換してから、
+  /// 現在の見た目半径だけscreen-spaceで退避させる。
+  static func screenEdgeAnchors(
+    from startLogicalCenter: CGPoint,
+    to endLogicalCenter: CGPoint,
+    origin: CGPoint,
+    viewport: GraphViewportTransform,
+    startRadius: CGFloat,
+    endRadius: CGFloat
+  ) -> GraphEdgeAnchors {
+    edgeAnchors(
+      from: viewport.applying(to: startLogicalCenter, around: origin),
+      to: viewport.applying(to: endLogicalCenter, around: origin),
+      startRadius: startRadius,
+      endRadius: endRadius
+    )
+  }
+
+  static func coupleKnotCenter(first: CGPoint, second: CGPoint) -> CGPoint {
+    CGPoint(x: (first.x + second.x) / 2, y: (first.y + second.y) / 2)
   }
 }
 
@@ -1377,8 +1434,8 @@ struct FamilyGraphView: View {
         AppTheme.paper
 
         ZStack {
-          // 線とノードを同じ未変換座標系に置き、親レイヤーへ一度だけ
-          // パン・ズームを適用する。線だけ／ノードだけの二重変換を防ぐ。
+          // 線とノードは同じ論理座標とviewport transformから画面座標を派生させる。
+          // 線だけ／ノードだけに独自のscale・offsetを重ねない。
           ZStack {
             ForEach(renderSnapshot.edges) { item in
               let edge = item.edge
@@ -1387,8 +1444,7 @@ struct FamilyGraphView: View {
                   from: a,
                   to: b,
                   origin: origin,
-                  transform: viewportTransform,
-                  cameraScale: effectiveScale
+                  transform: viewportTransform
                 )
                 if GraphViewportCulling.isEdgeVisible(
                   start: anchors.start,
@@ -1502,17 +1558,16 @@ struct FamilyGraphView: View {
           ZStack {
             ForEach(renderSnapshot.nodes) { item in
               let node = item.node
-              let beadCenter = viewportTransform.applying(
-                to: graphPosition(node, origin: origin),
-                around: origin
-              )
               let isFocused = node.id == focusedNodeID
               let distance = focusDistances[node.id]
               let focusPresentation = GraphFocusHierarchy.presentation(for: distance)
-              let lodPresentation = GraphNodeLODPolicy.presentation(
-                cameraScale: effectiveScale,
+              let nodeGeometry = nodeScreenGeometry(
+                node,
+                origin: origin,
+                transform: viewportTransform,
                 focusScale: focusPresentation.nodeScale
               )
+              let beadCenter = nodeGeometry.center
               let semanticVisibility = GraphSemanticZoomPolicy.visibility(
                 at: semanticZoomLevel,
                 isFocused: isFocused,
@@ -1540,18 +1595,16 @@ struct FamilyGraphView: View {
                   focusPresentation: focusPresentation
                 )
                 .frame(width: nodeCardWidth, height: nodeCardHeight, alignment: .top)
-                .position(
-                  x: beadCenter.x,
-                  y: beadCenter.y + (nodeCardHeight - beadDiameter) / 2
-                )
-                // 登場・バウンスは珠の中心を固定した局所アニメーションに限定する。
+                // 必ずlocal scaleを先に適用し、その後screen-spaceの中心へ配置する。
+                // position後のscaleEffectは絶対座標まで再変換し、倍率に応じたズレを生む。
                 .scaleEffect(
                   (visibleNodeIDs.contains(node.id) ? 1 : 0.3)
-                    * (lodPresentation.screenDiameter / beadDiameter)
+                    * nodeGeometry.visualScale
                     * (bouncingNodeID == node.id ? 1.08 : 1),
-                  anchor: UnitPoint(x: 0.5, y: (beadDiameter / 2) / nodeCardHeight)
+                  anchor: nodeGeometry.scaleAnchor
                 )
                 .opacity(visibleNodeIDs.contains(node.id) ? 1 : 0)
+                .position(nodeGeometry.cardPosition)
                 .accessibilityElement(children: .ignore)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityIdentifier("connectionMap.node.\(node.person.name)")
@@ -1565,7 +1618,8 @@ struct FamilyGraphView: View {
                   nodeAccessibilityValue(
                     node: node,
                     zoomLevel: semanticZoomLevel,
-                    focusPresentation: focusPresentation
+                    focusPresentation: focusPresentation,
+                    geometry: nodeGeometry
                   )
                 )
                 .accessibilityAction {
@@ -1589,6 +1643,17 @@ struct FamilyGraphView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .zIndex(GraphRenderLayer.nodes.rawValue)
           .graphNodeLayerAccessibility()
+
+          #if DEBUG
+          if ProcessInfo.processInfo.arguments.contains("-ui-testing-family-graph-expand-all") {
+            Color.clear
+              .contentShape(Rectangle())
+              .accessibilityElement(children: .ignore)
+              .accessibilityIdentifier("connectionMap.testGestureSurface")
+              .accessibilityLabel("つながりマップ操作面")
+              .zIndex(GraphRenderLayer.nodes.rawValue + 1)
+          }
+          #endif
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
@@ -1603,6 +1668,11 @@ struct FamilyGraphView: View {
       }
       .onAppear {
         prepareInitialGraph(viewport: geo.size)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-family-graph-expand-all") {
+          expandAllForUITesting()
+        }
+        #endif
       }
     }
     .frame(height: viewportHeight)
@@ -1749,34 +1819,60 @@ struct FamilyGraphView: View {
     )
   }
 
+  private func nodeScreenGeometry(
+    _ node: GraphNode,
+    origin: CGPoint,
+    transform: GraphViewportTransform,
+    focusScale: CGFloat? = nil
+  ) -> GraphNodeScreenGeometry {
+    GraphNodeScreenGeometry.resolve(
+      logicalCenter: graphPosition(node, origin: origin),
+      origin: origin,
+      viewport: transform,
+      focusScale: focusScale
+        ?? GraphFocusHierarchy.presentation(for: focusDistances[node.id]).nodeScale,
+      beadDiameter: beadDiameter,
+      cardHeight: nodeCardHeight
+    )
+  }
+
   private func edgeAnchors(
     from first: GraphNode,
     to second: GraphNode,
     origin: CGPoint,
-    transform: GraphViewportTransform,
-    cameraScale: CGFloat
+    transform: GraphViewportTransform
   ) -> GraphEdgeAnchors {
-    let firstCenter = transform.applying(
-      to: graphPosition(first, origin: origin),
-      around: origin
-    )
-    let secondCenter = transform.applying(
+    let firstGeometry = nodeScreenGeometry(first, origin: origin, transform: transform)
+    let secondGeometry = nodeScreenGeometry(second, origin: origin, transform: transform)
+    return GraphCanvasGeometry.screenEdgeAnchors(
+      from: graphPosition(first, origin: origin),
       to: graphPosition(second, origin: origin),
-      around: origin
-    )
-    return GraphCanvasGeometry.edgeAnchors(
-      from: firstCenter,
-      to: secondCenter,
-      startRadius: GraphNodeLODPolicy.presentation(
-        cameraScale: cameraScale,
-        focusScale: GraphFocusHierarchy.presentation(for: focusDistances[first.id]).nodeScale
-      ).screenDiameter / 2,
-      endRadius: GraphNodeLODPolicy.presentation(
-        cameraScale: cameraScale,
-        focusScale: GraphFocusHierarchy.presentation(for: focusDistances[second.id]).nodeScale
-      ).screenDiameter / 2
+      origin: origin,
+      viewport: transform,
+      startRadius: firstGeometry.radius,
+      endRadius: secondGeometry.radius
     )
   }
+
+  #if DEBUG
+  /// UI検証専用。selfから到達できる全人物を展開し、50/100人fixtureでも
+  /// 製品と同じ描画経路を使ったzoom/pan証拠を安定して取得する。
+  private func expandAllForUITesting() {
+    var processed: Set<PersistentModelIDBox> = []
+
+    while let node = store.nodes.values.first(where: { !processed.contains($0.id) }) {
+      processed.insert(node.id)
+      expandedIDs.insert(node.id)
+      store.expand(node.person)
+    }
+
+    visibleNodeIDs.formUnion(store.nodes.keys)
+    for edge in store.edges {
+      edgeProgress[edge.id] = 1
+    }
+    updateFocus(to: displayedPerson)
+  }
+  #endif
 
   private func edgeFocusOpacity(for edge: GraphEdge) -> Double {
     let closestDistance = [focusDistances[edge.from], focusDistances[edge.to]]
@@ -1791,7 +1887,7 @@ struct FamilyGraphView: View {
     }
     let a = graphPosition(first, origin: origin)
     let b = graphPosition(second, origin: origin)
-    return CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+    return GraphCanvasGeometry.coupleKnotCenter(first: a, second: b)
   }
 
   private func renderPosition(
@@ -1820,13 +1916,13 @@ struct FamilyGraphView: View {
       let start = renderPosition(segment.from, origin: origin),
       let end = renderPosition(segment.to, origin: origin)
     else { return nil }
-    let transformedStart = transform.applying(to: start, around: origin)
-    let transformedEnd = transform.applying(to: end, around: origin)
     let startRadius = endpointScreenRadius(segment.from, cameraScale: cameraScale)
     let endRadius = endpointScreenRadius(segment.to, cameraScale: cameraScale)
-    return GraphCanvasGeometry.edgeAnchors(
-      from: transformedStart,
-      to: transformedEnd,
+    return GraphCanvasGeometry.screenEdgeAnchors(
+      from: start,
+      to: end,
+      origin: origin,
+      viewport: transform,
       startRadius: startRadius,
       endRadius: endRadius
     )
@@ -1941,12 +2037,13 @@ struct FamilyGraphView: View {
   private func nodeAccessibilityValue(
     node: GraphNode,
     zoomLevel: GraphSemanticZoomLevel,
-    focusPresentation: GraphFocusPresentation
+    focusPresentation: GraphFocusPresentation,
+    geometry: GraphNodeScreenGeometry
   ) -> String {
     let expansion = expandedIDs.contains(node.id) ? "展開済み" : "未展開"
     #if DEBUG
       if ProcessInfo.processInfo.arguments.contains("-ui-testing-family-graph-ux") {
-        return "\(expansion)|zoom:\(zoomLevel.rawValue)|focus:\(focusPresentation.band)"
+        return "\(expansion)|zoom:\(zoomLevel.rawValue)|focus:\(focusPresentation.band)|center:\(String(format: "%.1f", geometry.center.x)),\(String(format: "%.1f", geometry.center.y))|radius:\(String(format: "%.1f", geometry.radius))"
       }
     #endif
     return expansion

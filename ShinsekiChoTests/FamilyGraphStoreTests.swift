@@ -1081,6 +1081,272 @@ final class FamilyGraphStoreTests: XCTestCase {
     )
   }
 
+  func testNodeScreenGeometryKeepsCardBeadAnchorAtTransformedCenterAcrossScales() {
+    let origin = CGPoint(x: 196, y: 322)
+    let logicalCenter = CGPoint(x: 412, y: 82)
+
+    for scale: CGFloat in [0.4, 0.6, 1, 2.5] {
+      let viewport = GraphViewportTransform(
+        scale: scale,
+        offset: CGSize(width: 41, height: -27)
+      )
+      let geometry = GraphNodeScreenGeometry.resolve(
+        logicalCenter: logicalCenter,
+        origin: origin,
+        viewport: viewport,
+        focusScale: 1.06,
+        beadDiameter: 56,
+        cardHeight: 102
+      )
+      let expectedCenter = viewport.applying(to: logicalCenter, around: origin)
+      let unscaledCardTop = geometry.cardPosition.y - 102 / 2
+      let beadAnchorY = unscaledCardTop + 56 / 2
+
+      XCTAssertEqual(geometry.center.x, expectedCenter.x, accuracy: 0.0001)
+      XCTAssertEqual(geometry.center.y, expectedCenter.y, accuracy: 0.0001)
+      XCTAssertEqual(geometry.cardPosition.x, expectedCenter.x, accuracy: 0.0001)
+      XCTAssertEqual(beadAnchorY, expectedCenter.y, accuracy: 0.0001)
+      XCTAssertEqual(geometry.scaleAnchor.x, 0.5, accuracy: 0.0001)
+      XCTAssertEqual(geometry.scaleAnchor.y, 28 / 102, accuracy: 0.0001)
+    }
+  }
+
+  func testNodeVisualRadiusChangesWithoutMovingCenter() {
+    let origin = CGPoint(x: 200, y: 300)
+    let logicalCenter = CGPoint(x: 92, y: 540)
+    let viewport = GraphViewportTransform(
+      scale: 1,
+      offset: CGSize(width: -18, height: 33)
+    )
+    let normal = GraphNodeScreenGeometry.resolve(
+      logicalCenter: logicalCenter,
+      origin: origin,
+      viewport: viewport,
+      focusScale: 1,
+      beadDiameter: 56,
+      cardHeight: 102
+    )
+    let focused = GraphNodeScreenGeometry.resolve(
+      logicalCenter: logicalCenter,
+      origin: origin,
+      viewport: viewport,
+      focusScale: 1.06,
+      beadDiameter: 56,
+      cardHeight: 102
+    )
+
+    XCTAssertEqual(normal.center, focused.center)
+    XCTAssertGreaterThan(focused.radius, normal.radius)
+  }
+
+  func testScreenEdgeEndpointMatchesCurrentVisualRadiusAcrossZoomAndPan() {
+    let origin = CGPoint(x: 210, y: 350)
+    let startLogical = CGPoint(x: 102, y: 230)
+    let endLogical = CGPoint(x: 426, y: 590)
+
+    for scale: CGFloat in [0.4, 0.6, 1, 2.5] {
+      let viewport = GraphViewportTransform(
+        scale: scale,
+        offset: CGSize(width: 73, height: -48)
+      )
+      let startNode = GraphNodeScreenGeometry.resolve(
+        logicalCenter: startLogical,
+        origin: origin,
+        viewport: viewport,
+        focusScale: 1.06,
+        beadDiameter: 56,
+        cardHeight: 102
+      )
+      let endNode = GraphNodeScreenGeometry.resolve(
+        logicalCenter: endLogical,
+        origin: origin,
+        viewport: viewport,
+        focusScale: 0.9,
+        beadDiameter: 56,
+        cardHeight: 102
+      )
+      let anchors = GraphCanvasGeometry.screenEdgeAnchors(
+        from: startLogical,
+        to: endLogical,
+        origin: origin,
+        viewport: viewport,
+        startRadius: startNode.radius,
+        endRadius: endNode.radius
+      )
+
+      XCTAssertEqual(anchors.startCenter.x, startNode.center.x, accuracy: 0.0001)
+      XCTAssertEqual(anchors.startCenter.y, startNode.center.y, accuracy: 0.0001)
+      XCTAssertEqual(anchors.endCenter.x, endNode.center.x, accuracy: 0.0001)
+      XCTAssertEqual(anchors.endCenter.y, endNode.center.y, accuracy: 0.0001)
+      XCTAssertEqual(
+        hypot(
+          anchors.start.x - startNode.center.x,
+          anchors.start.y - startNode.center.y
+        ),
+        startNode.radius,
+        accuracy: 0.5
+      )
+      XCTAssertEqual(
+        hypot(
+          anchors.end.x - endNode.center.x,
+          anchors.end.y - endNode.center.y
+        ),
+        endNode.radius,
+        accuracy: 0.5
+      )
+    }
+  }
+
+  func testSpouseEdgeUsesEachSpouseCurrentScreenRadius() {
+    let origin = CGPoint(x: 180, y: 260)
+    let first = CGPoint(x: 72, y: 260)
+    let second = CGPoint(x: 288, y: 260)
+    let viewport = GraphViewportTransform(
+      scale: 2.5,
+      offset: CGSize(width: -31, height: 22)
+    )
+    let firstNode = GraphNodeScreenGeometry.resolve(
+      logicalCenter: first,
+      origin: origin,
+      viewport: viewport,
+      focusScale: 1.06,
+      beadDiameter: 56,
+      cardHeight: 102
+    )
+    let secondNode = GraphNodeScreenGeometry.resolve(
+      logicalCenter: second,
+      origin: origin,
+      viewport: viewport,
+      focusScale: 0.94,
+      beadDiameter: 56,
+      cardHeight: 102
+    )
+    let anchors = GraphCanvasGeometry.screenEdgeAnchors(
+      from: first,
+      to: second,
+      origin: origin,
+      viewport: viewport,
+      startRadius: firstNode.radius,
+      endRadius: secondNode.radius
+    )
+
+    XCTAssertEqual(anchors.start.x - anchors.startCenter.x, firstNode.radius, accuracy: 0.5)
+    XCTAssertEqual(anchors.endCenter.x - anchors.end.x, secondNode.radius, accuracy: 0.5)
+  }
+
+  func testCoupleKnotCenterUsesLogicalMidpointAndSharedViewport() {
+    let origin = CGPoint(x: 200, y: 300)
+    let first = CGPoint(x: 92, y: 180)
+    let second = CGPoint(x: 308, y: 180)
+    let viewport = GraphViewportTransform(
+      scale: 0.6,
+      offset: CGSize(width: 44, height: -29)
+    )
+    let logicalKnot = GraphCanvasGeometry.coupleKnotCenter(first: first, second: second)
+    let screenKnot = viewport.applying(to: logicalKnot, around: origin)
+    let transformedFirst = viewport.applying(to: first, around: origin)
+    let transformedSecond = viewport.applying(to: second, around: origin)
+
+    XCTAssertEqual(
+      screenKnot.x,
+      (transformedFirst.x + transformedSecond.x) / 2,
+      accuracy: 0.0001
+    )
+    XCTAssertEqual(
+      screenKnot.y,
+      (transformedFirst.y + transformedSecond.y) / 2,
+      accuracy: 0.0001
+    )
+  }
+
+  func testSharedChildSegmentConnectsKnotAndChildAtTheirScreenRadii() {
+    let origin = CGPoint(x: 200, y: 300)
+    let knot = CGPoint(x: 200, y: 180)
+    let child = CGPoint(x: 308, y: 420)
+    let viewport = GraphViewportTransform(
+      scale: 0.4,
+      offset: CGSize(width: -22, height: 36)
+    )
+    let childNode = GraphNodeScreenGeometry.resolve(
+      logicalCenter: child,
+      origin: origin,
+      viewport: viewport,
+      focusScale: 1,
+      beadDiameter: 56,
+      cardHeight: 102
+    )
+    let anchors = GraphCanvasGeometry.screenEdgeAnchors(
+      from: knot,
+      to: child,
+      origin: origin,
+      viewport: viewport,
+      startRadius: 4.5,
+      endRadius: childNode.radius
+    )
+
+    XCTAssertEqual(
+      hypot(
+        anchors.start.x - anchors.startCenter.x,
+        anchors.start.y - anchors.startCenter.y
+      ),
+      4.5,
+      accuracy: 0.5
+    )
+    XCTAssertEqual(
+      hypot(
+        anchors.end.x - childNode.center.x,
+        anchors.end.y - childNode.center.y
+      ),
+      childNode.radius,
+      accuracy: 0.5
+    )
+  }
+
+  func testCullingDoesNotAlterScreenEdgeEndpointGeometry() {
+    let origin = CGPoint(x: 200, y: 300)
+    let viewport = GraphViewportTransform(
+      scale: 2.5,
+      offset: CGSize(width: 800, height: -650)
+    )
+    let anchors = GraphCanvasGeometry.screenEdgeAnchors(
+      from: CGPoint(x: 92, y: 180),
+      to: CGPoint(x: 308, y: 420),
+      origin: origin,
+      viewport: viewport,
+      startRadius: 39,
+      endRadius: 32
+    )
+    let before = anchors
+
+    _ = GraphViewportCulling.isEdgeVisible(
+      start: anchors.start,
+      end: anchors.end,
+      viewportSize: CGSize(width: 393, height: 620)
+    )
+
+    XCTAssertEqual(anchors.start, before.start)
+    XCTAssertEqual(anchors.end, before.end)
+    XCTAssertEqual(anchors.startCenter, before.startCenter)
+    XCTAssertEqual(anchors.endCenter, before.endCenter)
+  }
+
+  func testNodeGeometryIsIndependentOfDynamicTypeMetrics() {
+    let geometry = GraphNodeScreenGeometry.resolve(
+      logicalCenter: CGPoint(x: 250, y: 420),
+      origin: CGPoint(x: 200, y: 300),
+      viewport: GraphViewportTransform(
+        scale: 0.6,
+        offset: CGSize(width: 18, height: -11)
+      ),
+      focusScale: 1,
+      beadDiameter: 56,
+      cardHeight: 102
+    )
+
+    XCTAssertEqual(geometry.radius, 16.8, accuracy: 0.0001)
+    XCTAssertEqual(geometry.cardPosition.y - geometry.center.y, 23, accuracy: 0.0001)
+  }
+
   func testFocusTransitionCentersTargetWithoutChangingCameraScale() {
     let offset = GraphFocusTransition.centeredOffset(
       position: GraphGridPosition(level: -2, slot: 3),

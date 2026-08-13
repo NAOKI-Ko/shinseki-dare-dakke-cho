@@ -1053,50 +1053,193 @@ final class ShinsekiChoUITests: XCTestCase {
     keepScreenshot(app, name: "FamilyConstellation_12_focus_transition_complete")
   }
 
-  func testFamilyConstellationVisualEvidenceWithTwentyExpandedPeople() {
+  func testFamilyGraphRCVisualEvidenceWithFiftyExpandedPeople() {
     executionTimeAllowance = 180
     let app = launch(
-      seed: true,
-      additionalArguments: ["-ui-testing-family-graph-ux"]
+      additionalArguments: [
+        "-ui-testing-performance-medium",
+        "-ui-testing-family-graph-ux",
+        "-ui-testing-family-graph-expand-all"
+      ]
     )
     let canvas = element("connectionMap.home.canvas", in: app)
     XCTAssertTrue(canvas.waitForExistence(timeout: 5))
-    let father = element("connectionMap.node.山田 一郎", in: app)
-    XCTAssertTrue(father.waitForExistence(timeout: 5))
-    father.tap()
-
-    func addJointChild(number: Int) {
-      father.press(forDuration: 0.7)
-      let childAction = app.buttons["connectionMap.menu.child"]
-      XCTAssertTrue(childAction.waitForExistence(timeout: 3))
-      childAction.tap()
-      let newPersonMode = app.buttons["新しい人物"]
-      XCTAssertTrue(newPersonMode.waitForExistence(timeout: 3))
-      newPersonMode.tap()
-      let field = element("quickRelative.name", in: app)
-      XCTAssertTrue(field.waitForExistence(timeout: 3))
-      let name = "共同の子 \(number)"
-      field.typeText(name)
-      app.buttons["quickRelative.save"].tap()
-      XCTAssertTrue(father.waitForExistence(timeout: 5))
+    let gestureSurface = element("connectionMap.testGestureSurface", in: app)
+    XCTAssertTrue(gestureSurface.waitForExistence(timeout: 5))
+    func waitForScale(_ expected: Double, tolerance: Double = 0.04) {
+      let predicate = NSPredicate { object, _ in
+        guard
+          let element = object as? XCUIElement,
+          let value = element.value as? String,
+          let scaleText = value.components(separatedBy: "scale:").last,
+          let observedScale = Double(scaleText.components(separatedBy: "|").first ?? "")
+        else { return false }
+        return abs(observedScale - expected) <= tolerance
+      }
+      XCTAssertEqual(
+        XCTWaiter.wait(
+          for: [XCTNSPredicateExpectation(predicate: predicate, object: canvas)],
+          timeout: 5
+        ),
+        .completed
+      )
     }
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale(1)
+    keepScreenshot(app, name: "FamilyGraphRC_01_fifty_people_initial")
+    gestureSurface.pinch(withScale: 0.35, velocity: -1)
+    waitForScale(0.4)
+    XCTAssertTrue((canvas.value as? String)?.contains("nodes:50") == true)
+    let visibleNode = app.descendants(matching: .any)
+      .matching(NSPredicate(format: "identifier BEGINSWITH %@", "connectionMap.node."))
+      .firstMatch
+    XCTAssertTrue(visibleNode.waitForExistence(timeout: 5))
+    XCTAssertTrue((visibleNode.value as? String)?.contains("center:") == true)
+    XCTAssertTrue((visibleNode.value as? String)?.contains("radius:") == true)
+    sleep(1)
+    keepScreenshot(app, name: "FamilyGraphRC_02_fifty_people_zoom_0_4")
 
-    for number in 1...12 {
-      addJointChild(number: number)
-    }
-
-    let spouse = element("connectionMap.node.佐藤 美咲", in: app)
-    XCTAssertTrue(spouse.waitForExistence(timeout: 5))
-    spouse.tap()
-    let spouseFather = element("connectionMap.node.佐藤 修一", in: app)
-    XCTAssertTrue(spouseFather.waitForExistence(timeout: 5))
-    spouseFather.tap()
+    gestureSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.55))
+      .press(
+        forDuration: 0.05,
+        thenDragTo: gestureSurface.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.65, dy: 0.48)
+        )
+      )
+    keepScreenshot(app, name: "FamilyGraphRC_03_fifty_people_pan")
 
     app.buttons["connectionMap.resetButton"].tap()
-    canvas.pinch(withScale: 0.4, velocity: -1)
-    XCTAssertTrue((canvas.value as? String)?.contains("nodes:20") == true)
-    sleep(1)
-    keepScreenshot(app, name: "FamilyConstellation_08_twenty_people")
+    waitForScale(1)
+    gestureSurface.pinch(withScale: 3, velocity: 1)
+    waitForScale(2.5)
+    keepScreenshot(app, name: "FamilyGraphRC_04_fifty_people_zoom_2_5")
+
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale(1)
+    keepScreenshot(app, name: "FamilyGraphRC_05_fifty_people_reset")
+  }
+
+  func testFamilyGraphRCAlignmentInDarkAndAccessibilityLarge() {
+    executionTimeAllowance = 120
+
+    func verify(
+      interfaceStyle: String,
+      contentSizeCategory: String?,
+      screenshotPrefix: String
+    ) {
+      let app = launch(
+        interfaceStyle: interfaceStyle,
+        contentSizeCategory: contentSizeCategory,
+        additionalArguments: [
+          "-ui-testing-performance-medium",
+          "-ui-testing-family-graph-ux",
+          "-ui-testing-family-graph-expand-all"
+        ]
+      )
+      let canvas = element("connectionMap.home.canvas", in: app)
+      let gestureSurface = element("connectionMap.testGestureSurface", in: app)
+      XCTAssertTrue(canvas.waitForExistence(timeout: 8))
+      XCTAssertTrue(gestureSurface.waitForExistence(timeout: 5))
+      XCTAssertTrue((canvas.value as? String)?.contains("nodes:50") == true)
+
+      func waitForScale(_ expected: Double) {
+        let predicate = NSPredicate { object, _ in
+          guard
+            let element = object as? XCUIElement,
+            let value = element.value as? String,
+            let scaleText = value.components(separatedBy: "scale:").last,
+            let observedScale = Double(scaleText.components(separatedBy: "|").first ?? "")
+          else { return false }
+          return abs(observedScale - expected) <= 0.04
+        }
+        XCTAssertEqual(
+          XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: predicate, object: canvas)],
+            timeout: 5
+          ),
+          .completed
+        )
+      }
+
+      app.buttons["connectionMap.resetButton"].tap()
+      waitForScale(1)
+      gestureSurface.pinch(withScale: 0.35, velocity: -1)
+      waitForScale(0.4)
+      keepScreenshot(app, name: "\(screenshotPrefix)_zoom_0_4")
+
+      app.buttons["connectionMap.resetButton"].tap()
+      waitForScale(1)
+      gestureSurface.pinch(withScale: 3, velocity: 1)
+      waitForScale(2.5)
+      keepScreenshot(app, name: "\(screenshotPrefix)_zoom_2_5")
+      app.terminate()
+    }
+
+    verify(
+      interfaceStyle: "Dark",
+      contentSizeCategory: nil,
+      screenshotPrefix: "FamilyGraphRC_Dark"
+    )
+    verify(
+      interfaceStyle: "Light",
+      contentSizeCategory: "UICTContentSizeCategoryAccessibilityXXXL",
+      screenshotPrefix: "FamilyGraphRC_AccessibilityXXXL"
+    )
+  }
+
+  func testFamilyGraphRCStressHundredExpandedPeopleSmoke() {
+    executionTimeAllowance = 90
+    let app = launch(
+      additionalArguments: [
+        "-ui-testing-performance-stress",
+        "-ui-testing-family-graph-ux",
+        "-ui-testing-family-graph-expand-all"
+      ]
+    )
+    let canvas = element("connectionMap.home.canvas", in: app)
+    let gestureSurface = element("connectionMap.testGestureSurface", in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 12))
+    XCTAssertTrue(gestureSurface.waitForExistence(timeout: 5))
+    XCTAssertTrue((canvas.value as? String)?.contains("nodes:100") == true)
+
+    func waitForScale(_ expected: Double) {
+      let predicate = NSPredicate { object, _ in
+        guard
+          let element = object as? XCUIElement,
+          let value = element.value as? String,
+          let scaleText = value.components(separatedBy: "scale:").last,
+          let observedScale = Double(scaleText.components(separatedBy: "|").first ?? "")
+        else { return false }
+        return abs(observedScale - expected) <= 0.04
+      }
+      XCTAssertEqual(
+        XCTWaiter.wait(
+          for: [XCTNSPredicateExpectation(predicate: predicate, object: canvas)],
+          timeout: 5
+        ),
+        .completed
+      )
+    }
+
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale(1)
+    gestureSurface.pinch(withScale: 0.35, velocity: -1)
+    waitForScale(0.4)
+    gestureSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.55))
+      .press(
+        forDuration: 0.05,
+        thenDragTo: gestureSurface.coordinate(
+          withNormalizedOffset: CGVector(dx: 0.62, dy: 0.46)
+        )
+      )
+    keepScreenshot(app, name: "FamilyGraphRC_100_people_zoom_0_4_pan")
+
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale(1)
+    gestureSurface.pinch(withScale: 3, velocity: 1)
+    waitForScale(2.5)
+    app.buttons["connectionMap.resetButton"].tap()
+    waitForScale(1)
   }
 
   func testMapContextMenuDetailNavigationAndAvailableParentAction() {
