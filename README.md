@@ -67,10 +67,11 @@
 ### XcodeでのStoreKitテスト
 
 リポジトリ直下の`ShinsekiCho.storekit`に、同じProduct ID・非消費型・
-日本ストア600円のローカル商品を定義しています。Appleへの実課金なしで
-確認する場合は、ローカルテスト時だけRun > Options > StoreKit Configurationで
-このファイルを選択します。現在の共有Schemeは実機Sandbox／App Store Connectを
-参照するため`None`のままです。ユニットテストでは
+日本ストア600円のローカル商品を定義しています。現在の共有Schemeは
+Run > Options > StoreKit Configurationを`None`にしており、通常の起動では
+App Store Connect／Sandboxの商品情報を取得します。Appleへの実課金なしで
+ローカル購入・復元を確認する場合に限り、Scheme編集画面で一時的に
+`ShinsekiCho.storekit`を指定してください。ユニットテストでは
 成功・承認待ち・キャンセル・エラー・商品未取得を確認します。さらに
 `SKTestSession`で実際に商品を取得し、Product ID、600円の価格、円記号を含む
 ローカライズ価格、非消費型商品の購入完了まで確認します。Xcode 26.5の
