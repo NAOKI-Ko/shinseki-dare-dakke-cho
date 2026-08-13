@@ -1851,4 +1851,127 @@ final class ShinsekiChoUITests: XCTestCase {
     XCTAssertTrue(element("gatheringPrep.root", in: app).waitForExistence(timeout: 8))
     XCTAssertTrue(element("gatheringPrep.next", in: app).exists)
   }
+
+  /// App Store画像制作専用。既存のDEBUG fixtureだけを組み合わせ、
+  /// 実装済み画面を同一のライトモード・架空データで撮影する。
+  func testCaptureAppStoreRawScreenshots() {
+    var app = launch(
+      seed: true,
+      additionalArguments: [
+        "-ui-testing-memory-assist",
+        "-ui-testing-app-store-screenshots",
+        "-ui-testing-purchased"
+      ]
+    )
+    showList(in: app)
+    var kenta = element("person.cell.佐藤 健太", in: app)
+    reveal(kenta, in: app)
+    XCTAssertTrue(kenta.waitForExistence(timeout: 5))
+    kenta.tap()
+    XCTAssertTrue(element("personMemory.summary", in: app).waitForExistence(timeout: 5))
+    sleep(1)
+    keepScreenshot(app, name: "raw_01_memory_summary")
+    app.terminate()
+
+    app = launch(
+      seed: true,
+      additionalArguments: [
+        "-ui-testing-family-graph-expand-all",
+        "-ui-testing-app-store-screenshots",
+        "-ui-testing-purchased"
+      ]
+    )
+    let canvas = element("connectionMap.home.canvas", in: app)
+    XCTAssertTrue(canvas.waitForExistence(timeout: 8))
+    XCTAssertTrue(element("connectionMap.node.佐藤 蓮", in: app).waitForExistence(timeout: 8))
+    sleep(2)
+    canvas.pinch(withScale: 0.82, velocity: -0.25)
+    sleep(1)
+    keepScreenshot(app, name: "raw_02_family_graph")
+    app.terminate()
+
+    app = launch(
+      seed: true,
+      additionalArguments: [
+        "-ui-testing-memory-assist",
+        "-ui-testing-gathering-prep",
+        "-ui-testing-app-store-screenshots",
+        "-ui-testing-purchased"
+      ]
+    )
+    app.buttons["集まり"].tap()
+    let prepGathering = element("gathering.cell.親族の集まり", in: app)
+    XCTAssertTrue(prepGathering.waitForExistence(timeout: 5))
+    prepGathering.tap()
+    XCTAssertTrue(app.buttons["gathering.prepButton"].waitForExistence(timeout: 5))
+    app.buttons["gathering.prepButton"].tap()
+    XCTAssertTrue(element("gatheringPrep.root", in: app).waitForExistence(timeout: 5))
+    sleep(1)
+    keepScreenshot(app, name: "raw_03_gathering_prep")
+    app.terminate()
+
+    app = launch(
+      seed: true,
+      additionalArguments: [
+        "-ui-testing-search-enhancement",
+        "-ui-testing-app-store-screenshots",
+        "-ui-testing-purchased"
+      ]
+    )
+    let searchField = app.searchFields.firstMatch
+    XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+    searchField.tap()
+    searchField.typeText("親族の集まり")
+    XCTAssertTrue(element("person.cell.佐藤 健太", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(element("person.cell.佐藤 美咲", in: app).exists)
+    XCTAssertTrue(element("person.cell.山田 花子", in: app).exists)
+    let searchKey = app.keyboards.buttons["検索"]
+    if searchKey.exists {
+      searchKey.tap()
+    } else {
+      searchField.typeText("\n")
+    }
+    XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+    sleep(1)
+    keepScreenshot(app, name: "raw_04_search")
+    app.terminate()
+
+    app = launch(
+      seed: true,
+      additionalArguments: [
+        "-ui-testing-memory-assist",
+        "-ui-testing-app-store-screenshots",
+        "-ui-testing-purchased"
+      ]
+    )
+    showList(in: app)
+    kenta = element("person.cell.佐藤 健太", in: app)
+    reveal(kenta, in: app)
+    XCTAssertTrue(kenta.waitForExistence(timeout: 5))
+    kenta.tap()
+    let attendedGathering = element("personDetail.gathering.祖母の一周忌", in: app)
+    revealInPersonDetail(attendedGathering, in: app)
+    XCTAssertTrue(element("personDetail.memo", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(attendedGathering.waitForExistence(timeout: 5))
+    sleep(1)
+    keepScreenshot(app, name: "raw_05_person_memory")
+    app.terminate()
+
+    app = launch(
+      seed: true,
+      additionalArguments: [
+        "-ui-testing-backup-preview",
+        "-ui-testing-app-store-screenshots",
+        "-ui-testing-purchased"
+      ]
+    )
+    app.tabBars.buttons["設定"].tap()
+    let restoreButton = app.buttons["settings.backup.restore"]
+    reveal(restoreButton, in: app)
+    XCTAssertTrue(restoreButton.waitForExistence(timeout: 5))
+    restoreButton.tap()
+    XCTAssertTrue(element("backup.preview.people", in: app).waitForExistence(timeout: 5))
+    sleep(1)
+    keepScreenshot(app, name: "raw_06_backup")
+  }
 }

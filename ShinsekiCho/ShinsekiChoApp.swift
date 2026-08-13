@@ -130,7 +130,8 @@ struct ShinsekiChoApp: App {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist")
             || ProcessInfo.processInfo.arguments.contains("-ui-testing-gathering-prep")
-            || ProcessInfo.processInfo.arguments.contains("-ui-testing-search-enhancement") {
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-search-enhancement")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-app-store-screenshots") {
             spouseBrother.lastMetDate = Calendar(identifier: .gregorian).date(
                 from: DateComponents(year: 2026, month: 7, day: 12)
             )
@@ -138,6 +139,16 @@ struct ShinsekiChoApp: App {
             spouseBrother.livingArea = "横浜"
             spouseBrother.memo = "次は登山の話を聞く"
             spouseBrother.favorites = "珈琲と登山"
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-app-store-screenshots") {
+            selfPerson.phone = "090-1234-5678"
+            selfPerson.email = "taro.yamada@example.com"
+            selfPerson.livingArea = "東京"
+            spouse.phone = "090-2345-6789"
+            spouse.email = "misaki.sato@example.com"
+            spouse.livingArea = "横浜"
+            spouse.favorites = "和菓子と猫"
+            mother.favorites = "和菓子と俳句"
         }
         #endif
         let nephew = Person(
@@ -198,7 +209,8 @@ struct ShinsekiChoApp: App {
         gathering.attendees.append(selfPerson)
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-memory-assist")
-            || ProcessInfo.processInfo.arguments.contains("-ui-testing-gathering-prep") {
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-gathering-prep")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-app-store-screenshots") {
             gathering.attendees.append(spouseBrother)
         }
         #endif
@@ -230,6 +242,10 @@ struct ShinsekiChoApp: App {
             )
             context.insert(searchGathering)
             searchGathering.attendees.append(spouseBrother)
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-app-store-screenshots") {
+                searchGathering.attendees.append(spouse)
+                searchGathering.attendees.append(mother)
+            }
         }
         #endif
         try context.save()
