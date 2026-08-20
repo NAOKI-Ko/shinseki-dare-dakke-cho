@@ -1605,3 +1605,673 @@ final class FamilyGraphStoreTests: XCTestCase {
     }))
   }
 }
+
+// MARK: - Family graph layout investigation (diagnostic-only)
+
+/// Human-readable layout invariants. These tests intentionally describe the desired
+/// family grouping, even when the current placement algorithm does not satisfy it.
+@MainActor
+final class FamilyGraphLayoutDiagnosticTests: XCTestCase {
+  private struct CanonicalFixture {
+    let container: ModelContainer
+    let selfPerson: Person
+    let father: Person
+    let mother: Person
+    let paternalGrandfather: Person
+    let paternalGrandmother: Person
+    let maternalGrandfather: Person
+    let maternalGrandmother: Person
+  }
+
+  private struct ExtendedFixture {
+    let canonical: CanonicalFixture
+    let paternalGreatGrandparents: [Person]
+    let maternalGreatGrandparents: [Person]
+  }
+
+  private func makeContainer() throws -> ModelContainer {
+    try ModelContainer(
+      for: Person.self,
+      Gathering.self,
+      configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
+  }
+
+  private func makeCanonicalFixture() throws -> CanonicalFixture {
+    let container = try makeContainer()
+    let fixture = CanonicalFixture(
+      container: container,
+      selfPerson: Person(name: "Self", isSelf: true),
+      father: Person(name: "Father"),
+      mother: Person(name: "Mother"),
+      paternalGrandfather: Person(name: "PaternalGrandfather"),
+      paternalGrandmother: Person(name: "PaternalGrandmother"),
+      maternalGrandfather: Person(name: "MaternalGrandfather"),
+      maternalGrandmother: Person(name: "MaternalGrandmother")
+    )
+    let people = [
+      fixture.selfPerson,
+      fixture.father,
+      fixture.mother,
+      fixture.paternalGrandfather,
+      fixture.paternalGrandmother,
+      fixture.maternalGrandfather,
+      fixture.maternalGrandmother,
+    ]
+    people.forEach(container.mainContext.insert)
+    try container.mainContext.save()
+
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.father,
+      child: fixture.selfPerson
+    ))
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.mother,
+      child: fixture.selfPerson
+    ))
+    XCTAssertTrue(RelationshipManager.setSpouse(
+      fixture.paternalGrandfather,
+      fixture.paternalGrandmother
+    ))
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.paternalGrandfather,
+      child: fixture.father
+    ))
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.paternalGrandmother,
+      child: fixture.father
+    ))
+    XCTAssertTrue(RelationshipManager.setSpouse(
+      fixture.maternalGrandfather,
+      fixture.maternalGrandmother
+    ))
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.maternalGrandfather,
+      child: fixture.mother
+    ))
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.maternalGrandmother,
+      child: fixture.mother
+    ))
+    return fixture
+  }
+
+  private func makeExtendedFixture() throws -> ExtendedFixture {
+    let canonical = try makeCanonicalFixture()
+    let paternal = (1...4).map { Person(name: "PaternalGreatGrandparent\($0)") }
+    let maternal = (1...4).map { Person(name: "MaternalGreatGrandparent\($0)") }
+    (paternal + maternal).forEach(canonical.container.mainContext.insert)
+    try canonical.container.mainContext.save()
+
+    XCTAssertTrue(RelationshipManager.setSpouse(paternal[0], paternal[1]))
+    XCTAssertTrue(RelationshipManager.setSpouse(paternal[2], paternal[3]))
+    XCTAssertTrue(RelationshipManager.setSpouse(maternal[0], maternal[1]))
+    XCTAssertTrue(RelationshipManager.setSpouse(maternal[2], maternal[3]))
+    for parent in paternal[0...1] {
+      XCTAssertTrue(RelationshipManager.addParentChild(
+        parent: parent,
+        child: canonical.paternalGrandfather
+      ))
+    }
+    for parent in paternal[2...3] {
+      XCTAssertTrue(RelationshipManager.addParentChild(
+        parent: parent,
+        child: canonical.paternalGrandmother
+      ))
+    }
+    for parent in maternal[0...1] {
+      XCTAssertTrue(RelationshipManager.addParentChild(
+        parent: parent,
+        child: canonical.maternalGrandfather
+      ))
+    }
+    for parent in maternal[2...3] {
+      XCTAssertTrue(RelationshipManager.addParentChild(
+        parent: parent,
+        child: canonical.maternalGrandmother
+      ))
+    }
+    return ExtendedFixture(
+      canonical: canonical,
+      paternalGreatGrandparents: paternal,
+      maternalGreatGrandparents: maternal
+    )
+  }
+
+  private func key(_ person: Person) -> PersistentModelIDBox {
+    PersistentModelIDBox(person.persistentModelID)
+  }
+
+  private func node(_ person: Person, in store: FamilyGraphStore) -> GraphNode? {
+    store.nodes[key(person)]
+  }
+
+  private func positionedPeople(
+    in store: FamilyGraphStore,
+    level: Int
+  ) -> [(person: Person, level: Int, slot: Int)] {
+    store.nodes.values
+      .filter { $0.level == level }
+      .sorted {
+        if $0.slot != $1.slot { return $0.slot < $1.slot }
+        return $0.person.name < $1.person.name
+      }
+      .map { ($0.person, $0.level, $0.slot) }
+  }
+
+  private func layoutDump(_ store: FamilyGraphStore, level: Int) -> String {
+    let lines = positionedPeople(in: store, level: level).map {
+      "slot \($0.slot): \($0.person.name) (level \($0.level))"
+    }
+    return "level \(level):\n" + lines.joined(separator: "\n")
+  }
+
+  private func branchSequence(
+    store: FamilyGraphStore,
+    level: Int,
+    first: Set<PersistentModelIDBox>,
+    second: Set<PersistentModelIDBox>
+  ) -> [Character] {
+    positionedPeople(in: store, level: level).compactMap { entry in
+      let id = key(entry.person)
+      if first.contains(id) { return "P" }
+      if second.contains(id) { return "M" }
+      return nil
+    }
+  }
+
+  private func isContiguous(_ sequence: [Character]) -> Bool {
+    var closed = Set<Character>()
+    var previous: Character?
+    for value in sequence {
+      if value != previous {
+        if closed.contains(value) { return false }
+        if let previous { closed.insert(previous) }
+        previous = value
+      }
+    }
+    return true
+  }
+
+  private func areAdjacent(_ first: Person, _ second: Person, in store: FamilyGraphStore) -> Bool {
+    guard let firstNode = node(first, in: store), let secondNode = node(second, in: store),
+      firstNode.level == secondNode.level
+    else { return false }
+    let levelSlots = positionedPeople(in: store, level: firstNode.level).map(\.slot)
+    guard let firstIndex = levelSlots.firstIndex(of: firstNode.slot),
+      let secondIndex = levelSlots.firstIndex(of: secondNode.slot)
+    else { return false }
+    return abs(firstIndex - secondIndex) == 1
+  }
+
+  private func canonicalStore(
+    _ fixture: CanonicalFixture,
+    parentOrder: [Person]
+  ) -> FamilyGraphStore {
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.selfPerson)
+    store.expand(fixture.selfPerson)
+    parentOrder.forEach(store.expand)
+    return store
+  }
+
+  private func namedPositions(_ store: FamilyGraphStore) -> [String: GraphGridPosition] {
+    Dictionary(uniqueKeysWithValues: store.nodes.values.map {
+      ($0.person.name, GraphGridPosition(level: $0.level, slot: $0.slot))
+    })
+  }
+
+  func testDiagnosticCanonicalGenerationCorrectness() throws {
+    let fixture = try makeCanonicalFixture()
+    let store = canonicalStore(fixture, parentOrder: [fixture.father, fixture.mother])
+
+    XCTAssertEqual(node(fixture.selfPerson, in: store)?.level, 0)
+    XCTAssertEqual(node(fixture.father, in: store)?.level, -1)
+    XCTAssertEqual(node(fixture.mother, in: store)?.level, -1)
+    for grandparent in [
+      fixture.paternalGrandfather,
+      fixture.paternalGrandmother,
+      fixture.maternalGrandfather,
+      fixture.maternalGrandmother,
+    ] {
+      XCTAssertEqual(
+        node(grandparent, in: store)?.level,
+        -2,
+        "\(grandparent.name)\n\(layoutDump(store, level: -2))"
+      )
+    }
+  }
+
+  func testDiagnosticSlotsAreUniqueWithinEveryGeneration() throws {
+    let fixture = try makeCanonicalFixture()
+    let store = canonicalStore(fixture, parentOrder: [fixture.mother, fixture.father])
+
+    for level in Set(store.nodes.values.map(\.level)) {
+      let slots = positionedPeople(in: store, level: level).map(\.slot)
+      XCTAssertEqual(
+        Set(slots).count,
+        slots.count,
+        layoutDump(store, level: level)
+      )
+    }
+  }
+
+  func testDiagnosticGrandparentCouplesRemainAdjacentWhenMaternalBranchExpandsFirst() throws {
+    let fixture = try makeCanonicalFixture()
+    let store = canonicalStore(fixture, parentOrder: [fixture.mother, fixture.father])
+
+    XCTAssertTrue(
+      areAdjacent(fixture.paternalGrandfather, fixture.paternalGrandmother, in: store),
+      "Paternal couple was split.\n\(layoutDump(store, level: -2))"
+    )
+    XCTAssertTrue(
+      areAdjacent(fixture.maternalGrandfather, fixture.maternalGrandmother, in: store),
+      "Maternal couple was split.\n\(layoutDump(store, level: -2))"
+    )
+  }
+
+  func testDiagnosticGrandparentFamilyBlocksRemainContiguous() throws {
+    let fixture = try makeCanonicalFixture()
+    let store = canonicalStore(fixture, parentOrder: [fixture.mother, fixture.father])
+    let paternal = Set([fixture.paternalGrandfather, fixture.paternalGrandmother].map(key))
+    let maternal = Set([fixture.maternalGrandfather, fixture.maternalGrandmother].map(key))
+    let sequence = branchSequence(
+      store: store,
+      level: -2,
+      first: paternal,
+      second: maternal
+    )
+
+    XCTAssertTrue(
+      isContiguous(sequence),
+      "branch sequence = \(String(sequence))\n\(layoutDump(store, level: -2))"
+    )
+  }
+
+  func testDiagnosticGreatGrandparentSubtreesRemainContiguous() throws {
+    let fixture = try makeExtendedFixture()
+    let canonical = fixture.canonical
+    let store = canonicalStore(canonical, parentOrder: [canonical.mother, canonical.father])
+    [
+      canonical.maternalGrandfather,
+      canonical.paternalGrandfather,
+      canonical.maternalGrandmother,
+      canonical.paternalGrandmother,
+    ].forEach(store.expand)
+    let paternal = Set(fixture.paternalGreatGrandparents.map(key))
+    let maternal = Set(fixture.maternalGreatGrandparents.map(key))
+    let sequence = branchSequence(
+      store: store,
+      level: -3,
+      first: paternal,
+      second: maternal
+    )
+
+    XCTAssertTrue(
+      isContiguous(sequence),
+      "branch sequence = \(String(sequence))\n\(layoutDump(store, level: -3))"
+    )
+  }
+
+  func testDiagnosticSemanticLayoutIsIndependentOfExpansionOrder() throws {
+    let fixture = try makeCanonicalFixture()
+    let fatherFirst = canonicalStore(
+      fixture,
+      parentOrder: [fixture.father, fixture.mother]
+    )
+    let motherFirst = canonicalStore(
+      fixture,
+      parentOrder: [fixture.mother, fixture.father]
+    )
+    let shortestPathDiscovery = FamilyGraphStore()
+    shortestPathDiscovery.reset(with: fixture.selfPerson)
+    shortestPathDiscovery.expandShortestPath(to: fixture.maternalGrandmother)
+    shortestPathDiscovery.expandShortestPath(to: fixture.paternalGrandfather)
+    let paternal = Set([fixture.paternalGrandfather, fixture.paternalGrandmother].map(key))
+    let maternal = Set([fixture.maternalGrandfather, fixture.maternalGrandmother].map(key))
+
+    for (label, store) in [
+      ("father-first", fatherFirst),
+      ("mother-first", motherFirst),
+      ("shortest-path maternal-first", shortestPathDiscovery),
+    ] {
+      let sequence = branchSequence(
+        store: store,
+        level: -2,
+        first: paternal,
+        second: maternal
+      )
+      XCTAssertTrue(
+        isContiguous(sequence),
+        "\(label) sequence = \(String(sequence))\n\(layoutDump(store, level: -2))"
+      )
+      XCTAssertTrue(
+        areAdjacent(fixture.paternalGrandfather, fixture.paternalGrandmother, in: store),
+        "\(label): paternal couple split\n\(layoutDump(store, level: -2))"
+      )
+      XCTAssertTrue(
+        areAdjacent(fixture.maternalGrandfather, fixture.maternalGrandmother, in: store),
+        "\(label): maternal couple split\n\(layoutDump(store, level: -2))"
+      )
+    }
+  }
+
+  func testDiagnosticLateDiscoveredBranchDoesNotSplitExistingFamilyBlock() throws {
+    let fixture = try makeCanonicalFixture()
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.selfPerson)
+    store.expand(fixture.selfPerson)
+    store.expand(fixture.mother)
+    let maternalBefore = [fixture.maternalGrandfather, fixture.maternalGrandmother]
+      .compactMap { node($0, in: store)?.slot }
+    store.expand(fixture.father)
+    let paternal = Set([fixture.paternalGrandfather, fixture.paternalGrandmother].map(key))
+    let maternal = Set([fixture.maternalGrandfather, fixture.maternalGrandmother].map(key))
+    let sequence = branchSequence(
+      store: store,
+      level: -2,
+      first: paternal,
+      second: maternal
+    )
+
+    XCTAssertEqual(
+      maternalBefore,
+      [fixture.maternalGrandfather, fixture.maternalGrandmother]
+        .compactMap { node($0, in: store)?.slot },
+      "Previously placed maternal slots moved"
+    )
+    XCTAssertTrue(
+      isContiguous(sequence),
+      "late paternal discovery sequence = \(String(sequence))\n\(layoutDump(store, level: -2))"
+    )
+
+    let reverseStore = FamilyGraphStore()
+    reverseStore.reset(with: fixture.selfPerson)
+    reverseStore.expand(fixture.selfPerson)
+    reverseStore.expand(fixture.father)
+    let paternalBefore = [fixture.paternalGrandfather, fixture.paternalGrandmother]
+      .compactMap { node($0, in: reverseStore)?.slot }
+    reverseStore.expand(fixture.mother)
+    let reverseSequence = branchSequence(
+      store: reverseStore,
+      level: -2,
+      first: paternal,
+      second: maternal
+    )
+    XCTAssertEqual(
+      paternalBefore,
+      [fixture.paternalGrandfather, fixture.paternalGrandmother]
+        .compactMap { node($0, in: reverseStore)?.slot },
+      "Previously placed paternal slots moved"
+    )
+    XCTAssertTrue(
+      isContiguous(reverseSequence),
+      "late maternal discovery sequence = \(String(reverseSequence))\n"
+        + layoutDump(reverseStore, level: -2)
+    )
+  }
+
+  func testDiagnosticParentGenerationWithUnclesAndAuntsKeepsBranchesContiguous() throws {
+    let fixture = try makeCanonicalFixture()
+    let paternalUncle = Person(name: "PaternalUncle")
+    let maternalAunt = Person(name: "MaternalAunt")
+    [paternalUncle, maternalAunt].forEach(fixture.container.mainContext.insert)
+    try fixture.container.mainContext.save()
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.paternalGrandfather,
+      child: paternalUncle
+    ))
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.paternalGrandmother,
+      child: paternalUncle
+    ))
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.maternalGrandfather,
+      child: maternalAunt
+    ))
+    XCTAssertTrue(RelationshipManager.addParentChild(
+      parent: fixture.maternalGrandmother,
+      child: maternalAunt
+    ))
+    let store = canonicalStore(fixture, parentOrder: [fixture.mother, fixture.father])
+    store.expand(fixture.paternalGrandfather)
+    store.expand(fixture.maternalGrandfather)
+    let paternal = Set([fixture.father, paternalUncle].map(key))
+    let maternal = Set([fixture.mother, maternalAunt].map(key))
+    let sequence = branchSequence(
+      store: store,
+      level: -1,
+      first: paternal,
+      second: maternal
+    )
+
+    XCTAssertTrue(
+      isContiguous(sequence),
+      "branch sequence = \(String(sequence))\n\(layoutDump(store, level: -1))"
+    )
+  }
+
+  func testDiagnosticSpouseParentsDoNotInterleaveWithSelfParents() throws {
+    let fixture = try makeCanonicalFixture()
+    let spouse = Person(name: "Spouse")
+    let spouseParent1 = Person(name: "SpouseParent1")
+    let spouseParent2 = Person(name: "SpouseParent2")
+    [spouse, spouseParent1, spouseParent2].forEach(fixture.container.mainContext.insert)
+    try fixture.container.mainContext.save()
+    XCTAssertTrue(RelationshipManager.setSpouse(fixture.selfPerson, spouse))
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: spouseParent1, child: spouse))
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: spouseParent2, child: spouse))
+    let store = canonicalStore(fixture, parentOrder: [])
+    store.expand(spouse)
+    let own = Set([fixture.father, fixture.mother].map(key))
+    let spouseSide = Set([spouseParent1, spouseParent2].map(key))
+    let sequence = branchSequence(
+      store: store,
+      level: -1,
+      first: own,
+      second: spouseSide
+    )
+
+    XCTAssertTrue(
+      isContiguous(sequence),
+      "branch sequence = \(String(sequence))\n\(layoutDump(store, level: -1))"
+    )
+  }
+
+  func testDiagnosticIdenticalGraphAndExpansionSequenceIsDeterministic() throws {
+    var runs: [[String: (Int, Int)]] = []
+    for _ in 0..<5 {
+      let fixture = try makeCanonicalFixture()
+      let store = canonicalStore(fixture, parentOrder: [fixture.mother, fixture.father])
+      runs.append(Dictionary(uniqueKeysWithValues: namedPositions(store).map {
+        ($0.key, ($0.value.level, $0.value.slot))
+      }))
+    }
+
+    for run in runs.dropFirst() {
+      XCTAssertEqual(run.count, runs[0].count)
+      for (name, position) in runs[0] {
+        XCTAssertEqual(run[name]?.0, position.0, "level differed for \(name)")
+        XCTAssertEqual(run[name]?.1, position.1, "slot differed for \(name)")
+      }
+    }
+  }
+
+  func testDiagnosticSixPersonMinimalCounterexampleRemainsContiguous() throws {
+    let container = try makeContainer()
+    let selfPerson = Person(name: "Self", isSelf: true)
+    let father = Person(name: "Father")
+    let mother = Person(name: "Mother")
+    let paternalGrandfather = Person(name: "PaternalGrandfather")
+    let paternalGrandmother = Person(name: "PaternalGrandmother")
+    let maternalGrandparent = Person(name: "MaternalGrandparent")
+    let people = [
+      selfPerson, father, mother, paternalGrandfather, paternalGrandmother,
+      maternalGrandparent,
+    ]
+    people.forEach(container.mainContext.insert)
+    try container.mainContext.save()
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: father, child: selfPerson))
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: mother, child: selfPerson))
+    XCTAssertTrue(RelationshipManager.setSpouse(paternalGrandfather, paternalGrandmother))
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: paternalGrandfather, child: father))
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: paternalGrandmother, child: father))
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: maternalGrandparent, child: mother))
+    let store = FamilyGraphStore()
+    store.reset(with: selfPerson)
+    store.expand(selfPerson)
+    store.expand(mother)
+    store.expand(father)
+    let paternal = Set([paternalGrandfather, paternalGrandmother].map(key))
+    let maternal = Set([maternalGrandparent].map(key))
+    let sequence = branchSequence(
+      store: store,
+      level: -2,
+      first: paternal,
+      second: maternal
+    )
+
+    XCTAssertTrue(
+      isContiguous(sequence),
+      "minimal six-person sequence = \(String(sequence))\n\(layoutDump(store, level: -2))"
+    )
+  }
+
+  func testDiagnosticFixedPositionsAndContiguousFamilyBlocksCanCoexistIncrementally() throws {
+    let fixture = try makeCanonicalFixture()
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.selfPerson)
+    store.expand(fixture.selfPerson)
+    store.expand(fixture.mother)
+    let before = layoutDump(store, level: -2)
+    let fixedPositions = Dictionary(uniqueKeysWithValues: store.nodes.map {
+      ($0.key, ($0.value.level, $0.value.slot))
+    })
+    store.expand(fixture.father)
+    for (id, position) in fixedPositions {
+      XCTAssertEqual(store.nodes[id]?.level, position.0)
+      XCTAssertEqual(store.nodes[id]?.slot, position.1)
+    }
+    let paternal = Set([fixture.paternalGrandfather, fixture.paternalGrandmother].map(key))
+    let maternal = Set([fixture.maternalGrandfather, fixture.maternalGrandmother].map(key))
+    let sequence = branchSequence(
+      store: store,
+      level: -2,
+      first: paternal,
+      second: maternal
+    )
+
+    XCTAssertTrue(
+      isContiguous(sequence),
+      "Step before late branch:\n\(before)\nStep after late branch, sequence = \(String(sequence)):\n\(layoutDump(store, level: -2))"
+    )
+  }
+
+  func testDiagnosticParentChildEdgesDoNotCross() throws {
+    let fixture = try makeCanonicalFixture()
+    let store = canonicalStore(fixture, parentOrder: [fixture.mother, fixture.father])
+    let parentChildEdges = store.edges.compactMap { edge -> (GraphNode, GraphNode)? in
+      guard case .parentChild = edge.kind,
+        let first = store.nodes[edge.from],
+        let second = store.nodes[edge.to],
+        abs(first.level - second.level) == 1
+      else { return nil }
+      return first.level < second.level ? (first, second) : (second, first)
+    }
+    var crossings: [String] = []
+    for firstIndex in parentChildEdges.indices {
+      for secondIndex in parentChildEdges.indices where secondIndex > firstIndex {
+        let first = parentChildEdges[firstIndex]
+        let second = parentChildEdges[secondIndex]
+        guard first.0.level == second.0.level,
+          first.1.level == second.1.level,
+          key(first.0.person) != key(second.0.person),
+          key(first.1.person) != key(second.1.person)
+        else { continue }
+        let upperOrder = first.0.slot - second.0.slot
+        let lowerOrder = first.1.slot - second.1.slot
+        if upperOrder * lowerOrder < 0 {
+          crossings.append(
+            "\(first.0.person.name)(\(first.0.slot))->\(first.1.person.name)(\(first.1.slot)) crosses "
+              + "\(second.0.person.name)(\(second.0.slot))->\(second.1.person.name)(\(second.1.slot))"
+          )
+        }
+      }
+    }
+
+    XCTAssertTrue(
+      crossings.isEmpty,
+      crossings.joined(separator: "\n") + "\n" + layoutDump(store, level: -2)
+        + "\n" + layoutDump(store, level: -1)
+    )
+  }
+
+  func testDiagnosticPathEmphasisDirectParentIsOrderedAndExclusive() throws {
+    let fixture = try makeCanonicalFixture()
+    try assertOrderedPath(
+      from: fixture.selfPerson,
+      to: fixture.father,
+      expectedPeople: [fixture.selfPerson, fixture.father]
+    )
+  }
+
+  func testDiagnosticPathEmphasisGrandparentIsOrderedAndExclusive() throws {
+    let fixture = try makeCanonicalFixture()
+    try assertOrderedPath(
+      from: fixture.selfPerson,
+      to: fixture.paternalGrandfather,
+      expectedPeople: [fixture.selfPerson, fixture.father, fixture.paternalGrandfather]
+    )
+  }
+
+  func testDiagnosticPathEmphasisSpouseIsOrderedAndExclusive() throws {
+    let fixture = try makeCanonicalFixture()
+    let spouse = Person(name: "Spouse")
+    fixture.container.mainContext.insert(spouse)
+    try fixture.container.mainContext.save()
+    XCTAssertTrue(RelationshipManager.setSpouse(fixture.selfPerson, spouse))
+    try assertOrderedPath(
+      from: fixture.selfPerson,
+      to: spouse,
+      expectedPeople: [fixture.selfPerson, spouse]
+    )
+  }
+
+  func testDiagnosticPathEmphasisSpouseSideRelativeIsOrderedAndExclusive() throws {
+    let fixture = try makeCanonicalFixture()
+    let spouse = Person(name: "Spouse")
+    let spouseParent = Person(name: "SpouseParent")
+    [spouse, spouseParent].forEach(fixture.container.mainContext.insert)
+    try fixture.container.mainContext.save()
+    XCTAssertTrue(RelationshipManager.setSpouse(fixture.selfPerson, spouse))
+    XCTAssertTrue(RelationshipManager.addParentChild(parent: spouseParent, child: spouse))
+    try assertOrderedPath(
+      from: fixture.selfPerson,
+      to: spouseParent,
+      expectedPeople: [fixture.selfPerson, spouse, spouseParent]
+    )
+  }
+
+  private func assertOrderedPath(
+    from root: Person,
+    to target: Person,
+    expectedPeople: [Person],
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) throws {
+    let route = try XCTUnwrap(
+      RelationLabeler.shortestRoute(from: root, to: target),
+      file: file,
+      line: line
+    )
+    XCTAssertEqual(route.people.map(\.name), expectedPeople.map(\.name), file: file, line: line)
+    let actual = GraphPathEmphasis.orderedEdgeEndpoints(for: route)
+    let expected = zip(expectedPeople, expectedPeople.dropFirst()).map {
+      GraphEdgeEndpoints(key($0.0), key($0.1))
+    }
+    XCTAssertEqual(actual, expected, file: file, line: line)
+    XCTAssertEqual(actual.first, GraphEdgeEndpoints(key(root), key(expectedPeople[1])), file: file, line: line)
+    XCTAssertEqual(actual.last, GraphEdgeEndpoints(key(expectedPeople[expectedPeople.count - 2]), key(target)), file: file, line: line)
+    XCTAssertEqual(Set(actual), Set(expected), file: file, line: line)
+  }
+}
