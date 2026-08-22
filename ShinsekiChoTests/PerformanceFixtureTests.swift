@@ -143,10 +143,14 @@ final class PerformanceFixtureTests: XCTestCase {
 
         let viewport = CGSize(width: 393, height: 852)
         let origin = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+        let positions = try XCTUnwrap(store.horizontalLayoutResult).positionsByPersonID
         let visibleCount = store.renderSnapshot.nodes.filter { item in
-            let center = CGPoint(
-                x: origin.x + CGFloat(item.node.slot) * 108,
-                y: origin.y + CGFloat(item.node.level) * 120
+            guard let position = positions[item.id] else { return false }
+            let center = GraphCanvasGeometry.beadCenter(
+                position: position,
+                origin: origin,
+                horizontalUnitWidth: 108,
+                generationHeight: 120
             )
             return GraphViewportCulling.isNodeVisible(
                 center: center,

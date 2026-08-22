@@ -5,12 +5,8 @@ import ImageIO
 // MARK: - グラフ上のノード・エッジ
 
 /// キャンバス上に配置された1人分の情報。
-/// levelは自分を0とした世代(親方向は負、子方向は正)。
-/// slotは同じlevel内での横方向の並び順(整数の並び)。
 struct GraphNode: Identifiable {
   let person: Person
-  var level: Int
-  var slot: Int
   var path: [RelationStep]
   var id: PersistentModelIDBox { PersistentModelIDBox(person.persistentModelID) }
 }
@@ -120,14 +116,17 @@ struct FamilyGraphRenderSnapshot {
 enum GraphCoupleRenderBuilder {
   static func build(
     nodes: [PersistentModelIDBox: GraphNode],
-    edges: [GraphEdge]
+    edges: [GraphEdge],
+    positions: [PersistentModelIDBox: LayoutPosition]
   ) -> GraphCoupleRenderModel {
     var result = GraphCoupleRenderModel()
 
     for spouseEdge in edges where spouseEdge.kind == .spouse {
       guard
         let firstNode = nodes[spouseEdge.from],
-        let secondNode = nodes[spouseEdge.to]
+        let secondNode = nodes[spouseEdge.to],
+        positions[spouseEdge.from] != nil,
+        positions[spouseEdge.to] != nil
       else { continue }
 
       let firstChildren = Set(firstNode.person.children.map {
@@ -137,13 +136,11 @@ enum GraphCoupleRenderBuilder {
         PersistentModelIDBox($0.persistentModelID)
       })
       let commonChildren = firstChildren.intersection(secondChildren)
-        .filter { nodes[$0] != nil }
+        .filter { nodes[$0] != nil && positions[$0] != nil }
         .sorted {
-          let lhs = nodes[$0]
-          let rhs = nodes[$1]
-          if lhs?.level != rhs?.level { return (lhs?.level ?? 0) < (rhs?.level ?? 0) }
-          if lhs?.slot != rhs?.slot { return (lhs?.slot ?? 0) < (rhs?.slot ?? 0) }
-          return (lhs?.person.name ?? "") < (rhs?.person.name ?? "")
+          guard let lhs = positions[$0], let rhs = positions[$1] else { return false }
+          if lhs.generation != rhs.generation { return lhs.generation < rhs.generation }
+          return lhs.x < rhs.x
         }
       guard !commonChildren.isEmpty else { continue }
 
@@ -223,11 +220,6 @@ enum GraphPathEmphasis {
     let ordered = orderedEdgeEndpoints(for: route)
     return ordered.isEmpty ? nil : Set(ordered)
   }
-}
-
-struct GraphGridPosition {
-  let level: Int
-  let slot: Int
 }
 
 struct GraphViewportTransform: Equatable {
@@ -666,14 +658,14 @@ struct GraphEdgeAnchors {
 /// ノードとエッジが共有する、パン・ズーム前のキャンバス座標。
 enum GraphCanvasGeometry {
   static func beadCenter(
-    position: GraphGridPosition,
+    position: LayoutPosition,
     origin: CGPoint,
-    slotWidth: CGFloat,
-    levelHeight: CGFloat
+    horizontalUnitWidth: CGFloat,
+    generationHeight: CGFloat
   ) -> CGPoint {
     CGPoint(
-      x: origin.x + CGFloat(position.slot) * slotWidth,
-      y: origin.y + CGFloat(position.level) * levelHeight
+      x: origin.x + CGFloat(position.x) * horizontalUnitWidth,
+      y: origin.y + CGFloat(position.generation) * generationHeight
     )
   }
 
@@ -754,23 +746,43 @@ enum GraphHitTestGeometry {
   ) -> CGPoint {
     viewport.removing(from: screenLocation, around: origin)
   }
+
+  static func nearestNodeID<PersonID: Hashable>(
+    to graphLocation: CGPoint,
+    positions: [PersonID: LayoutPosition],
+    origin: CGPoint,
+    horizontalUnitWidth: CGFloat,
+    generationHeight: CGFloat,
+    hitRadius: CGFloat
+  ) -> PersonID? {
+    positions.compactMap { id, position -> (PersonID, CGFloat)? in
+      let point = GraphCanvasGeometry.beadCenter(
+        position: position,
+        origin: origin,
+        horizontalUnitWidth: horizontalUnitWidth,
+        generationHeight: generationHeight
+      )
+      let distance = hypot(point.x - graphLocation.x, point.y - graphLocation.y)
+      return distance <= hitRadius ? (id, distance) : nil
+    }.min { $0.1 < $1.1 }?.0
+  }
 }
 
 /// 導入時の全体俯瞰と、完了時のフォーカス位置を軽量な算術だけで求める。
 enum GraphIntroLayout {
   static func overview(
-    positions: [GraphGridPosition],
+    positions: [LayoutPosition],
     viewport: CGSize,
-    slotWidth: CGFloat,
-    levelHeight: CGFloat,
+    horizontalUnitWidth: CGFloat,
+    generationHeight: CGFloat,
     haloDiameter: CGFloat = 132
   ) -> GraphViewportTransform {
     guard !positions.isEmpty, viewport.width > 0, viewport.height > 0 else {
       return GraphViewportTransform(scale: 0.6, offset: .zero)
     }
 
-    let xs = positions.map { CGFloat($0.slot) * slotWidth }
-    let ys = positions.map { CGFloat($0.level) * levelHeight }
+    let xs = positions.map { CGFloat($0.x) * horizontalUnitWidth }
+    let ys = positions.map { CGFloat($0.generation) * generationHeight }
     let minX = xs.min() ?? 0
     let maxX = xs.max() ?? 0
     let minY = ys.min() ?? 0
@@ -794,15 +806,15 @@ enum GraphIntroLayout {
   }
 
   static func focus(
-    position: GraphGridPosition,
-    slotWidth: CGFloat,
-    levelHeight: CGFloat
+    position: LayoutPosition,
+    horizontalUnitWidth: CGFloat,
+    generationHeight: CGFloat
   ) -> GraphViewportTransform {
     GraphViewportTransform(
       scale: 1,
       offset: CGSize(
-        width: -CGFloat(position.slot) * slotWidth,
-        height: -CGFloat(position.level) * levelHeight
+        width: -CGFloat(position.x) * horizontalUnitWidth,
+        height: -CGFloat(position.generation) * generationHeight
       )
     )
   }
@@ -813,23 +825,23 @@ enum GraphFocusTransition {
   static let illuminationIntervalNanoseconds: UInt64 = 110_000_000
 
   static func centeredOffset(
-    position: GraphGridPosition,
+    position: LayoutPosition,
     cameraScale: CGFloat,
-    slotWidth: CGFloat,
-    levelHeight: CGFloat
+    horizontalUnitWidth: CGFloat,
+    generationHeight: CGFloat
   ) -> CGSize {
     CGSize(
-      width: -CGFloat(position.slot) * slotWidth * cameraScale,
-      height: -CGFloat(position.level) * levelHeight * cameraScale
+      width: -CGFloat(position.x) * horizontalUnitWidth * cameraScale,
+      height: -CGFloat(position.generation) * generationHeight * cameraScale
     )
   }
 
   /// visual focusだけならcameraを保持し、明示的なfocus時だけ対象を中央へ移す。
   static func viewport(
     from current: GraphViewportTransform,
-    centeredOn position: GraphGridPosition,
-    slotWidth: CGFloat,
-    levelHeight: CGFloat,
+    centeredOn position: LayoutPosition,
+    horizontalUnitWidth: CGFloat,
+    generationHeight: CGFloat,
     moveCamera: Bool
   ) -> GraphViewportTransform {
     guard moveCamera else { return current }
@@ -838,8 +850,8 @@ enum GraphFocusTransition {
       offset: centeredOffset(
         position: position,
         cameraScale: current.scale,
-        slotWidth: slotWidth,
-        levelHeight: levelHeight
+        horizontalUnitWidth: horizontalUnitWidth,
+        generationHeight: generationHeight
       )
     )
   }
@@ -1115,7 +1127,7 @@ final class FamilyGraphStore {
     edges = []
     renderSnapshot = FamilyGraphRenderSnapshot()
     rootID = PersistentModelIDBox(selfPerson.persistentModelID)
-    place(selfPerson, level: 0, preferredSlot: 0, path: [])
+    insert(selfPerson, path: [])
     refreshHorizontalLayout()
     refreshRenderSnapshot()
   }
@@ -1137,35 +1149,18 @@ final class FamilyGraphStore {
     let nodeCountBefore = nodes.count
     let edgeCountBefore = edges.count
 
-    for (index, parent) in person.parents.enumerated() {
-      _ = placeIfNeeded(
-        parent,
-        level: center.level - 1,
-        preferredSlot: center.slot + symmetricOffset(at: index),
-        path: center.path + [.parent]
-      )
+    for parent in person.parents {
+      _ = insertIfNeeded(parent, path: center.path + [.parent])
       addEdgeIfNeeded(from: parent, to: person, kind: .parentChild)
     }
 
-    var familyCenterSlot = center.slot
     if let spouse = person.spouse {
-      let spouseNode = placeIfNeeded(
-        spouse,
-        level: center.level,
-        preferredSlot: center.slot + spouseDirection(from: center.slot),
-        path: center.path + [.spouse]
-      )
+      _ = insertIfNeeded(spouse, path: center.path + [.spouse])
       addEdgeIfNeeded(from: person, to: spouse, kind: .spouse)
-      familyCenterSlot = Int(round(Double(center.slot + spouseNode.slot) / 2))
     }
 
-    for (index, child) in person.children.enumerated() {
-      _ = placeIfNeeded(
-        child,
-        level: center.level + 1,
-        preferredSlot: familyCenterSlot + symmetricOffset(at: index),
-        path: center.path + [.child]
-      )
+    for child in person.children {
+      _ = insertIfNeeded(child, path: center.path + [.child])
       addEdgeIfNeeded(from: person, to: child, kind: .parentChild)
     }
     // 兄弟姉妹は「共通の親」を介して自動的に見えるようになるため、
@@ -1226,10 +1221,8 @@ final class FamilyGraphStore {
     )
   }
 
-  private func placeIfNeeded(
+  private func insertIfNeeded(
     _ person: Person,
-    level: Int,
-    preferredSlot: Int,
     path: [RelationStep]
   ) -> GraphNode {
     let key = PersistentModelIDBox(person.persistentModelID)
@@ -1242,50 +1235,17 @@ final class FamilyGraphStore {
       }
       return existing
     }
-    return place(
-      person,
-      level: level,
-      preferredSlot: preferredSlot,
-      path: path
-    )
+    return insert(person, path: path)
   }
 
   @discardableResult
-  private func place(
+  private func insert(
     _ person: Person,
-    level: Int,
-    preferredSlot: Int,
     path: [RelationStep]
   ) -> GraphNode {
-    let slot = nearestAvailableSlot(level: level, preferred: preferredSlot)
-    let node = GraphNode(person: person, level: level, slot: slot, path: path)
+    let node = GraphNode(person: person, path: path)
     nodes[PersistentModelIDBox(person.persistentModelID)] = node
     return node
-  }
-
-  private func nearestAvailableSlot(level: Int, preferred: Int) -> Int {
-    let occupied = Set(nodes.values.filter { $0.level == level }.map(\.slot))
-    if !occupied.contains(preferred) { return preferred }
-    for distance in 1...100 {
-      let candidates = preferred >= 0
-        ? [preferred + distance, preferred - distance]
-        : [preferred - distance, preferred + distance]
-      if let candidate = candidates.first(where: { !occupied.contains($0) }) {
-        return candidate
-      }
-    }
-    return preferred
-  }
-
-  private func spouseDirection(from slot: Int) -> Int {
-    slot < 0 ? -1 : 1
-  }
-
-  /// 0, -1, +1, -2, +2... の順で、同世代を中心から横へ広げる。
-  private func symmetricOffset(at index: Int) -> Int {
-    guard index > 0 else { return 0 }
-    let distance = (index + 1) / 2
-    return index.isMultiple(of: 2) ? distance : -distance
   }
 
   private func addEdgeIfNeeded(from: Person, to: Person, kind: GraphEdge.Kind) {
@@ -1361,17 +1321,23 @@ final class FamilyGraphStore {
   }
 
   private func refreshRenderSnapshot() {
-    let coupleModel = GraphCoupleRenderBuilder.build(nodes: nodes, edges: edges)
+    let positions = horizontalLayoutResult?.positionsByPersonID ?? [:]
+    let coupleModel = GraphCoupleRenderBuilder.build(
+      nodes: nodes,
+      edges: edges,
+      positions: positions
+    )
     let nodeBranches = Dictionary(
       uniqueKeysWithValues: nodes.map { id, node in
         (id, FamilyBranch.classify(path: node.path))
       }
     )
     let nodeItems = nodes.values
+      .filter { positions[$0.id] != nil }
       .sorted {
-        if $0.level != $1.level { return $0.level < $1.level }
-        if $0.slot != $1.slot { return $0.slot < $1.slot }
-        return $0.person.name < $1.person.name
+        guard let lhs = positions[$0.id], let rhs = positions[$1.id] else { return false }
+        if lhs.generation != rhs.generation { return lhs.generation < rhs.generation }
+        return lhs.x < rhs.x
       }
       .map { node in
         GraphNodeRenderItem(
@@ -1477,8 +1443,8 @@ struct FamilyGraphView: View {
   @State private var viewportTransform = GraphViewportTransform(scale: 1, offset: .zero)
   @State private var gestureStartTransform: GraphViewportTransform?
 
-  private let levelHeight: CGFloat = 120
-  private let slotWidth: CGFloat = 108
+  private let generationHeight: CGFloat = 120
+  private let horizontalUnitWidth: CGFloat = 108
   private let nodeCardWidth: CGFloat = 92
   private let beadDiameter: CGFloat = 56
   private let nodeCardHeight: CGFloat = 102
@@ -1501,13 +1467,12 @@ struct FamilyGraphView: View {
             ForEach(renderSnapshot.edges) { item in
               let edge = item.edge
               if let a = store.nodes[edge.from], let b = store.nodes[edge.to] {
-                let anchors = edgeAnchors(
+                if let anchors = edgeAnchors(
                   from: a,
                   to: b,
                   origin: origin,
                   transform: viewportTransform
-                )
-                if GraphViewportCulling.isEdgeVisible(
+                ), GraphViewportCulling.isEdgeVisible(
                   start: anchors.start,
                   end: anchors.end,
                   viewportSize: geo.size
@@ -1594,11 +1559,12 @@ struct FamilyGraphView: View {
 
           ZStack {
             ForEach(renderSnapshot.coupleRenderModel.knots) { knot in
-              let knotCenter = viewportTransform.applying(
-                to: knotPosition(knot, origin: origin),
-                around: origin
-              )
-              if GraphViewportCulling.isNodeVisible(
+              if let logicalKnotCenter = knotPosition(knot, origin: origin) {
+                let knotCenter = viewportTransform.applying(
+                  to: logicalKnotCenter,
+                  around: origin
+                )
+                if GraphViewportCulling.isNodeVisible(
                 center: knotCenter,
                 radius: CoupleKnotView.diameter,
                 viewportSize: geo.size
@@ -1609,6 +1575,7 @@ struct FamilyGraphView: View {
                 )
                 .position(knotCenter)
                 .accessibilityHidden(true)
+                }
               }
             }
           }
@@ -1622,24 +1589,22 @@ struct FamilyGraphView: View {
               let isFocused = node.id == focusedNodeID
               let distance = focusDistances[node.id]
               let focusPresentation = GraphFocusHierarchy.presentation(for: distance)
-              let nodeGeometry = nodeScreenGeometry(
+              if let nodeGeometry = nodeScreenGeometry(
                 node,
                 origin: origin,
                 transform: viewportTransform,
                 focusScale: focusPresentation.nodeScale
-              )
-              let beadCenter = nodeGeometry.center
-              let semanticVisibility = GraphSemanticZoomPolicy.visibility(
-                at: semanticZoomLevel,
-                isFocused: isFocused,
-                focusDistance: distance,
-                isExpanded: expandedIDs.contains(node.id)
-              )
-              if GraphViewportCulling.isNodeVisible(
-                center: beadCenter,
+              ), GraphViewportCulling.isNodeVisible(
+                center: nodeGeometry.center,
                 radius: 96,
                 viewportSize: geo.size
               ) {
+                let semanticVisibility = GraphSemanticZoomPolicy.visibility(
+                  at: semanticZoomLevel,
+                  isFocused: isFocused,
+                  focusDistance: distance,
+                  isExpanded: expandedIDs.contains(node.id)
+                )
                 let photoImage = FamilyGraphPhotoCache.shared.image(
                   for: node.id,
                   photoData: node.person.photoData
@@ -1871,12 +1836,15 @@ struct FamilyGraphView: View {
     return introPhase
   }
 
-  private func graphPosition(_ node: GraphNode, origin: CGPoint) -> CGPoint {
-    GraphCanvasGeometry.beadCenter(
-      position: GraphGridPosition(level: node.level, slot: node.slot),
+  private func graphPosition(_ node: GraphNode, origin: CGPoint) -> CGPoint? {
+    guard let position = store.horizontalLayoutResult?.positionsByPersonID[node.id] else {
+      return nil
+    }
+    return GraphCanvasGeometry.beadCenter(
+      position: position,
       origin: origin,
-      slotWidth: slotWidth,
-      levelHeight: levelHeight
+      horizontalUnitWidth: horizontalUnitWidth,
+      generationHeight: generationHeight
     )
   }
 
@@ -1885,9 +1853,10 @@ struct FamilyGraphView: View {
     origin: CGPoint,
     transform: GraphViewportTransform,
     focusScale: CGFloat? = nil
-  ) -> GraphNodeScreenGeometry {
-    GraphNodeScreenGeometry.resolve(
-      logicalCenter: graphPosition(node, origin: origin),
+  ) -> GraphNodeScreenGeometry? {
+    guard let logicalCenter = graphPosition(node, origin: origin) else { return nil }
+    return GraphNodeScreenGeometry.resolve(
+      logicalCenter: logicalCenter,
       origin: origin,
       viewport: transform,
       focusScale: focusScale
@@ -1902,12 +1871,16 @@ struct FamilyGraphView: View {
     to second: GraphNode,
     origin: CGPoint,
     transform: GraphViewportTransform
-  ) -> GraphEdgeAnchors {
-    let firstGeometry = nodeScreenGeometry(first, origin: origin, transform: transform)
-    let secondGeometry = nodeScreenGeometry(second, origin: origin, transform: transform)
+  ) -> GraphEdgeAnchors? {
+    guard
+      let firstCenter = graphPosition(first, origin: origin),
+      let secondCenter = graphPosition(second, origin: origin),
+      let firstGeometry = nodeScreenGeometry(first, origin: origin, transform: transform),
+      let secondGeometry = nodeScreenGeometry(second, origin: origin, transform: transform)
+    else { return nil }
     return GraphCanvasGeometry.screenEdgeAnchors(
-      from: graphPosition(first, origin: origin),
-      to: graphPosition(second, origin: origin),
+      from: firstCenter,
+      to: secondCenter,
       origin: origin,
       viewport: transform,
       startRadius: firstGeometry.radius,
@@ -1942,13 +1915,13 @@ struct FamilyGraphView: View {
     return GraphFocusHierarchy.presentation(for: closestDistance).edgeOpacity
   }
 
-  private func knotPosition(_ knot: GraphCoupleKnot, origin: CGPoint) -> CGPoint {
-    guard let first = store.nodes[knot.first], let second = store.nodes[knot.second] else {
-      return origin
-    }
-    let a = graphPosition(first, origin: origin)
-    let b = graphPosition(second, origin: origin)
-    return GraphCanvasGeometry.coupleKnotCenter(first: a, second: b)
+  private func knotPosition(_ knot: GraphCoupleKnot, origin: CGPoint) -> CGPoint? {
+    guard
+      let first = store.nodes[knot.first], let second = store.nodes[knot.second],
+      let firstPosition = graphPosition(first, origin: origin),
+      let secondPosition = graphPosition(second, origin: origin)
+    else { return nil }
+    return GraphCanvasGeometry.coupleKnotCenter(first: firstPosition, second: secondPosition)
   }
 
   private func renderPosition(
@@ -2040,12 +2013,12 @@ struct FamilyGraphView: View {
     let emphasized = GraphPathEmphasis.edgeEndpoints(for: route)
     let orderedPath = GraphPathEmphasis.orderedEdgeEndpoints(for: route)
     let nextViewport: GraphViewportTransform
-    if let node = store.nodes[id] {
+    if let position = store.horizontalLayoutResult?.positionsByPersonID[id] {
       nextViewport = GraphFocusTransition.viewport(
         from: viewportTransform,
-        centeredOn: GraphGridPosition(level: node.level, slot: node.slot),
-        slotWidth: slotWidth,
-        levelHeight: levelHeight,
+        centeredOn: position,
+        horizontalUnitWidth: horizontalUnitWidth,
+        generationHeight: generationHeight,
         moveCamera: moveCamera
       )
     } else {
@@ -2214,24 +2187,23 @@ struct FamilyGraphView: View {
 
     if playsIntroAnimation && !reduceMotion {
       let overview = GraphIntroLayout.overview(
-        positions: store.nodes.values.map {
-          GraphGridPosition(level: $0.level, slot: $0.slot)
-        },
+        positions: store.horizontalLayoutResult.map { Array($0.positionsByPersonID.values) } ?? [],
         viewport: viewport,
-        slotWidth: slotWidth,
-        levelHeight: levelHeight
+        horizontalUnitWidth: horizontalUnitWidth,
+        generationHeight: generationHeight
       )
       viewportTransform = overview
       introPhase = "全体表示"
       animateIntroToFocusedPerson(token: animationToken)
     } else {
       let displayedID = PersistentModelIDBox(displayedPerson.persistentModelID)
-      let target = store.nodes[displayedID] ?? store.nodes[selfID]
+      let positions = store.horizontalLayoutResult?.positionsByPersonID
+      let target = positions?[displayedID] ?? positions?[selfID]
       if let target {
         viewportTransform = GraphIntroLayout.focus(
-          position: GraphGridPosition(level: target.level, slot: target.slot),
-          slotWidth: slotWidth,
-          levelHeight: levelHeight
+          position: target,
+          horizontalUnitWidth: horizontalUnitWidth,
+          generationHeight: generationHeight
         )
       } else {
         viewportTransform = GraphViewportTransform(scale: 1, offset: .zero)
@@ -2252,11 +2224,12 @@ struct FamilyGraphView: View {
 
       let displayedID = PersistentModelIDBox(displayedPerson.persistentModelID)
       let selfID = PersistentModelIDBox(selfPerson.persistentModelID)
-      guard let target = store.nodes[displayedID] ?? store.nodes[selfID] else { return }
+      let positions = store.horizontalLayoutResult?.positionsByPersonID
+      guard let target = positions?[displayedID] ?? positions?[selfID] else { return }
       let focused = GraphIntroLayout.focus(
-        position: GraphGridPosition(level: target.level, slot: target.slot),
-        slotWidth: slotWidth,
-        levelHeight: levelHeight
+        position: target,
+        horizontalUnitWidth: horizontalUnitWidth,
+        generationHeight: generationHeight
       )
       introPhase = "ズーム中"
       withAnimation(.easeInOut(duration: 0.6)) {
@@ -2321,14 +2294,17 @@ struct FamilyGraphView: View {
       viewport: transform
     )
     let hitRadius = max(44 / max(transform.scale, 0.01), beadDiameter / 2)
-    return store.nodes.values
-      .map { node in
-        let point = graphPosition(node, origin: origin)
-        return (node, hypot(point.x - graphLocation.x, point.y - graphLocation.y))
-      }
-      .filter { $0.1 <= hitRadius }
-      .min { $0.1 < $1.1 }?
-      .0
+    guard let positions = store.horizontalLayoutResult?.positionsByPersonID,
+      let id = GraphHitTestGeometry.nearestNodeID(
+        to: graphLocation,
+        positions: positions,
+        origin: origin,
+        horizontalUnitWidth: horizontalUnitWidth,
+        generationHeight: generationHeight,
+        hitRadius: hitRadius
+      )
+    else { return nil }
+    return store.nodes[id]
   }
 }
 

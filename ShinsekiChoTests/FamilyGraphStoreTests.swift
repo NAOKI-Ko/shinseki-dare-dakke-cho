@@ -110,10 +110,6 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertTrue(hasEdge(store, fixture.a, fixture.b, kind: .parentChild))
     XCTAssertTrue(hasEdge(store, fixture.a, fixture.c, kind: .spouse))
     XCTAssertTrue(hasEdge(store, fixture.a, fixture.d, kind: .parentChild))
-    XCTAssertEqual(store.nodes[key(fixture.a)]?.level, 0)
-    XCTAssertEqual(store.nodes[key(fixture.b)]?.level, -1)
-    XCTAssertEqual(store.nodes[key(fixture.c)]?.level, 0)
-    XCTAssertEqual(store.nodes[key(fixture.d)]?.level, 1)
     XCTAssertEqual(store.nodes[key(fixture.a)]?.path, [])
     XCTAssertEqual(store.nodes[key(fixture.b)]?.path, [.parent])
     XCTAssertEqual(store.nodes[key(fixture.c)]?.path, [.spouse])
@@ -214,6 +210,17 @@ final class FamilyGraphStoreTests: XCTestCase {
     assertCoupleIsAtomic("PGF", "PGM", layout: layout, people: fixture.people)
     assertCoupleIsAtomic("MGF", "MGM", layout: layout, people: fixture.people)
     assertAncestorBranchesDoNotInterleave(layout: layout, people: fixture.people)
+    let rendered = renderedCenters(layout: layout)
+    let paternal = ["PGF", "PGM"].map { rendered[key(fixture.people[$0]!)]!.x }
+    let maternal = ["MGF", "MGM"].map { rendered[key(fixture.people[$0]!)]!.x }
+    XCTAssertTrue(
+      paternal.max()! < maternal.min()! || maternal.max()! < paternal.min()!
+    )
+    let pgfCenter = rendered[key(fixture.people["PGF"]!)]!
+    let pgmCenter = rendered[key(fixture.people["PGM"]!)]!
+    let knotCenter = GraphCanvasGeometry.coupleKnotCenter(first: pgfCenter, second: pgmCenter)
+    XCTAssertEqual(knotCenter.x, (pgfCenter.x + pgmCenter.x) / 2, accuracy: 0.000_001)
+    XCTAssertEqual(knotCenter.y, (pgfCenter.y + pgmCenter.y) / 2, accuracy: 0.000_001)
   }
 
   func testSixPersonCounterexampleStoreLayoutKeepsCoupleTogether() throws {
@@ -232,6 +239,14 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertEqual(layout.parentChildCrossingCount, 0)
     XCTAssertEqual(abs(pgfX - pgmX), 1, accuracy: 0.000_001)
     XCTAssertFalse(maternalX > min(pgfX, pgmX) && maternalX < max(pgfX, pgmX))
+    let rendered = renderedCenters(layout: layout)
+    let renderedPGF = rendered[key(fixture.people["PGF"]!)]!.x
+    let renderedPGM = rendered[key(fixture.people["PGM"]!)]!.x
+    let renderedMaternal = rendered[key(fixture.people["MGF"]!)]!.x
+    XCTAssertFalse(
+      renderedMaternal > min(renderedPGF, renderedPGM)
+        && renderedMaternal < max(renderedPGF, renderedPGM)
+    )
   }
 
   func testStoreHorizontalLayoutIsExpansionOrderIndependent() throws {
@@ -251,6 +266,26 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertEqual(layoutDistanceMultiset(first), layoutDistanceMultiset(second))
     assertAncestorBranchesDoNotInterleave(layout: first, people: fixture.people)
     assertAncestorBranchesDoNotInterleave(layout: second, people: fixture.people)
+  }
+
+  func testRenderSnapshotOrderingUsesGenerationThenContinuousXNotName() throws {
+    let fixture = try makeFixture()
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.a)
+    store.expand(fixture.a)
+    let layout = try XCTUnwrap(store.horizontalLayoutResult)
+    let expected = layout.positionsByPersonID.sorted { first, second in
+      if first.value.generation != second.value.generation {
+        return first.value.generation < second.value.generation
+      }
+      return first.value.x < second.value.x
+    }.map(\.key)
+
+    XCTAssertEqual(store.renderSnapshot.nodes.map(\.id), expected)
+    fixture.a.name = "ZZZ"
+    fixture.b.name = "AAA"
+    store.expand(fixture.a)
+    XCTAssertEqual(store.renderSnapshot.nodes.map(\.id), expected)
   }
 
   func testLateDiscoveryReflowsLatestVisibleGraphWithFinitePositions() throws {
@@ -278,7 +313,6 @@ final class FamilyGraphStoreTests: XCTestCase {
     let store = FamilyGraphStore()
     store.reset(with: fixture.a)
     store.expand(fixture.a)
-    let dPositionBefore = store.nodes[key(fixture.d)].map { ($0.level, $0.slot) }
 
     // B・Cを配偶者かつDの共通の親にした後にBを展開する。
     // DはすでにAの子として配置済みなので、ノードは増やさず既存Dへ接続する。
@@ -294,10 +328,10 @@ final class FamilyGraphStoreTests: XCTestCase {
       }.count, 1)
     XCTAssertTrue(hasEdge(store, fixture.b, fixture.d, kind: .parentChild))
     XCTAssertTrue(hasEdge(store, fixture.b, fixture.c, kind: .spouse))
-    let dPositionAfter = store.nodes[key(fixture.d)].map { ($0.level, $0.slot) }
-    XCTAssertEqual(dPositionBefore?.0, dPositionAfter?.0)
-    XCTAssertEqual(dPositionBefore?.1, dPositionAfter?.1)
     XCTAssertEqual(store.nodes[key(fixture.d)]?.path, [.child])
+    let layout = try XCTUnwrap(store.horizontalLayoutResult)
+    XCTAssertTrue(layout.positionsByPersonID.isEmpty)
+    XCTAssertTrue(store.renderSnapshot.nodes.isEmpty)
   }
 
   func testFamilyGraphPhotoCacheDecodesUnchangedPhotoOnlyOnce() throws {
@@ -430,27 +464,23 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertLessThan(visibleCount, centers.count)
   }
 
-  func testPreviouslyPlacedNodeLevelsAndSlotsNeverChange() throws {
+  func testRenderedPositionsAlwaysFollowLatestHorizontalLayoutAfterReflow() throws {
     let fixture = try makeFixture()
     let store = FamilyGraphStore()
     store.reset(with: fixture.a)
     store.expand(fixture.a)
-    let originalPositions = Dictionary(
-      uniqueKeysWithValues: store.nodes.map { ($0.key, ($0.value.level, $0.value.slot)) }
-    )
     RelationshipManager.addParentChild(parent: fixture.b, child: fixture.d)
 
     store.expand(fixture.b)
     store.expand(fixture.c)
     store.expand(fixture.d)
 
-    for (id, position) in originalPositions {
-      XCTAssertEqual(store.nodes[id]?.level, position.0)
-      XCTAssertEqual(store.nodes[id]?.slot, position.1)
-    }
+    let layout = try XCTUnwrap(store.horizontalLayoutResult)
+    XCTAssertTrue(layout.positionsByPersonID.isEmpty)
+    XCTAssertTrue(store.renderSnapshot.nodes.isEmpty)
   }
 
-  func testShorterPathReplacesLongerPathWithoutMovingNode() throws {
+  func testShorterPathReplacesLongerPathWithoutDuplicatingLayoutState() throws {
     let fixture = try makeFixture()
     let relative = Person(name: "短い経路を後から得る人物")
     fixture.container.mainContext.insert(relative)
@@ -464,14 +494,13 @@ final class FamilyGraphStoreTests: XCTestCase {
 
     let relativeKey = key(relative)
     XCTAssertEqual(store.nodes[relativeKey]?.path, [.parent, .child])
-    let positionBefore = store.nodes[relativeKey].map { ($0.level, $0.slot) }
 
     RelationshipManager.addParentChild(parent: fixture.a, child: relative)
     store.expand(fixture.a)
 
     XCTAssertEqual(store.nodes[relativeKey]?.path, [.child])
-    XCTAssertEqual(store.nodes[relativeKey]?.level, positionBefore?.0)
-    XCTAssertEqual(store.nodes[relativeKey]?.slot, positionBefore?.1)
+    XCTAssertTrue(try XCTUnwrap(store.horizontalLayoutResult).positionsByPersonID.isEmpty)
+    XCTAssertTrue(store.renderSnapshot.nodes.isEmpty)
   }
 
   func testRelationLabelerReturnsSupportedLabels() {
@@ -653,37 +682,99 @@ final class FamilyGraphStoreTests: XCTestCase {
 
   func testIntroOverviewFitsTwentyNodesAndCompletesPromptly() {
     let positions = (0..<20).map {
-      GraphGridPosition(level: ($0 % 5) - 2, slot: $0 - 10)
+      LayoutPosition(generation: ($0 % 5) - 2, x: Double($0) - 9.5)
     }
     let startedAt = ProcessInfo.processInfo.systemUptime
     let transform = GraphIntroLayout.overview(
       positions: positions,
       viewport: CGSize(width: 390, height: 420),
-      slotWidth: 108,
-      levelHeight: 120
+      horizontalUnitWidth: 108,
+      generationHeight: 120
     )
     let elapsed = ProcessInfo.processInfo.systemUptime - startedAt
 
     XCTAssertGreaterThan(transform.scale, 0)
     XCTAssertLessThanOrEqual(transform.scale, 0.6)
     for position in positions {
-      let x = CGFloat(position.slot) * 108 * transform.scale + transform.offset.width
-      let y = CGFloat(position.level) * 120 * transform.scale + transform.offset.height
+      let x = CGFloat(position.x) * 108 * transform.scale + transform.offset.width
+      let y = CGFloat(position.generation) * 120 * transform.scale + transform.offset.height
       XCTAssertLessThanOrEqual(abs(x) + 66 * transform.scale, 183.001)
       XCTAssertLessThanOrEqual(abs(y) + 66 * transform.scale, 166.001)
     }
     XCTAssertLessThan(elapsed, 0.05)
   }
 
+  func testContinuousLayoutPositionMapsFractionalCoordinatesWithoutRounding() {
+    let origin = CGPoint(x: 200, y: 300)
+    let positive = GraphCanvasGeometry.beadCenter(
+      position: LayoutPosition(generation: -2, x: 1.5),
+      origin: origin,
+      horizontalUnitWidth: 108,
+      generationHeight: 120
+    )
+    let negative = GraphCanvasGeometry.beadCenter(
+      position: LayoutPosition(generation: 1, x: -2.25),
+      origin: origin,
+      horizontalUnitWidth: 108,
+      generationHeight: 120
+    )
+    let root = GraphCanvasGeometry.beadCenter(
+      position: LayoutPosition(generation: 0, x: 0),
+      origin: origin,
+      horizontalUnitWidth: 108,
+      generationHeight: 120
+    )
+
+    XCTAssertEqual(positive.x, 362, accuracy: 0.000_001)
+    XCTAssertEqual(positive.y, 60, accuracy: 0.000_001)
+    XCTAssertEqual(negative.x, -43, accuracy: 0.000_001)
+    XCTAssertEqual(negative.y, 420, accuracy: 0.000_001)
+    XCTAssertEqual(root, origin)
+  }
+
+  func testHitTestingUsesContinuousLayoutPositionInsteadOfRoundedSlot() {
+    let origin = CGPoint(x: 200, y: 300)
+    let positions = ["Node": LayoutPosition(generation: 0, x: 1.5)]
+    let newCenter = GraphCanvasGeometry.beadCenter(
+      position: positions["Node"]!,
+      origin: origin,
+      horizontalUnitWidth: 108,
+      generationHeight: 120
+    )
+    let oldRoundedCenter = CGPoint(x: origin.x + 108, y: origin.y)
+
+    XCTAssertEqual(
+      GraphHitTestGeometry.nearestNodeID(
+        to: newCenter,
+        positions: positions,
+        origin: origin,
+        horizontalUnitWidth: 108,
+        generationHeight: 120,
+        hitRadius: 30
+      ),
+      "Node"
+    )
+    XCTAssertNil(
+      GraphHitTestGeometry.nearestNodeID(
+        to: oldRoundedCenter,
+        positions: positions,
+        origin: origin,
+        horizontalUnitWidth: 108,
+        generationHeight: 120,
+        hitRadius: 30
+      )
+    )
+  }
+
   func testIntroFocusCentersTheDisplayedNode() {
     let transform = GraphIntroLayout.focus(
-      position: GraphGridPosition(level: 2, slot: -3),
-      slotWidth: 108,
-      levelHeight: 120
+      position: LayoutPosition(generation: 2, x: -3.25),
+      horizontalUnitWidth: 108,
+      generationHeight: 120
     )
 
     XCTAssertEqual(transform.scale, 1)
-    XCTAssertEqual(CGFloat(-3 * 108) + transform.offset.width, 0, accuracy: 0.001)
+    XCTAssertEqual(CGFloat(-3.25 * 108) + transform.offset.width, 0, accuracy: 0.001)
     XCTAssertEqual(CGFloat(2 * 120) + transform.offset.height, 0, accuracy: 0.001)
   }
 
@@ -795,16 +886,16 @@ final class FamilyGraphStoreTests: XCTestCase {
   func testGraphCanvasUsesOneTransformForNodeAndEdgeCentersAtSupportedScales() {
     let origin = CGPoint(x: 200, y: 300)
     let rawNodeCenter = GraphCanvasGeometry.beadCenter(
-      position: GraphGridPosition(level: -2, slot: 3),
+      position: LayoutPosition(generation: -2, x: 3.5),
       origin: origin,
-      slotWidth: 108,
-      levelHeight: 120
+      horizontalUnitWidth: 108,
+      generationHeight: 120
     )
     let otherCenter = GraphCanvasGeometry.beadCenter(
-      position: GraphGridPosition(level: 1, slot: -1),
+      position: LayoutPosition(generation: 1, x: -1.25),
       origin: origin,
-      slotWidth: 108,
-      levelHeight: 120
+      horizontalUnitWidth: 108,
+      generationHeight: 120
     )
     let anchors = GraphCanvasGeometry.edgeAnchors(
       from: rawNodeCenter,
@@ -970,9 +1061,9 @@ final class FamilyGraphStoreTests: XCTestCase {
     )
     let afterExpansion = GraphFocusTransition.viewport(
       from: afterTapLikeDrag,
-      centeredOn: GraphGridPosition(level: 2, slot: -1),
-      slotWidth: 108,
-      levelHeight: 120,
+      centeredOn: LayoutPosition(generation: 2, x: -1.5),
+      horizontalUnitWidth: 108,
+      generationHeight: 120,
       moveCamera: false
     )
 
@@ -1088,7 +1179,7 @@ final class FamilyGraphStoreTests: XCTestCase {
 
   func testExplicitFocusCameraCentersTargetAtCurrentScale() {
     let origin = CGPoint(x: 200, y: 300)
-    let position = GraphGridPosition(level: -2, slot: 3)
+    let position = LayoutPosition(generation: -2, x: 3.25)
     let current = GraphViewportTransform(
       scale: 1.4,
       offset: CGSize(width: 90, height: -44)
@@ -1096,15 +1187,15 @@ final class FamilyGraphStoreTests: XCTestCase {
     let focused = GraphFocusTransition.viewport(
       from: current,
       centeredOn: position,
-      slotWidth: 108,
-      levelHeight: 120,
+      horizontalUnitWidth: 108,
+      generationHeight: 120,
       moveCamera: true
     )
     let graphCenter = GraphCanvasGeometry.beadCenter(
       position: position,
       origin: origin,
-      slotWidth: 108,
-      levelHeight: 120
+      horizontalUnitWidth: 108,
+      generationHeight: 120
     )
     let screenCenter = focused.applying(to: graphCenter, around: origin)
 
@@ -1120,9 +1211,9 @@ final class FamilyGraphStoreTests: XCTestCase {
     )
     let result = GraphFocusTransition.viewport(
       from: current,
-      centeredOn: GraphGridPosition(level: 4, slot: -3),
-      slotWidth: 108,
-      levelHeight: 120,
+      centeredOn: LayoutPosition(generation: 4, x: -3.5),
+      horizontalUnitWidth: 108,
+      generationHeight: 120,
       moveCamera: false
     )
 
@@ -1545,10 +1636,10 @@ final class FamilyGraphStoreTests: XCTestCase {
 
   func testFocusTransitionCentersTargetWithoutChangingCameraScale() {
     let offset = GraphFocusTransition.centeredOffset(
-      position: GraphGridPosition(level: -2, slot: 3),
+      position: LayoutPosition(generation: -2, x: 3),
       cameraScale: 1.4,
-      slotWidth: 108,
-      levelHeight: 120
+      horizontalUnitWidth: 108,
+      generationHeight: 120
     )
     XCTAssertEqual(offset.width, -453.6, accuracy: 0.001)
     XCTAssertEqual(offset.height, 336, accuracy: 0.001)
@@ -1650,7 +1741,7 @@ final class FamilyGraphStoreTests: XCTestCase {
     )
   }
 
-  func testLocalLayoutKeepsSpouseAndSiblingsHorizontalAndGenerationsVertical() throws {
+  func testSemanticLayoutKeepsSpouseAndSiblingsHorizontalAndGenerationsVertical() throws {
     let fixture = try makeFixture()
     let sibling = Person(name: "きょうだい")
     fixture.container.mainContext.insert(sibling)
@@ -1660,25 +1751,19 @@ final class FamilyGraphStoreTests: XCTestCase {
     let store = FamilyGraphStore()
     store.reset(with: fixture.a)
     store.expand(fixture.a)
-    let originalPositions = Dictionary(
-      uniqueKeysWithValues: store.nodes.map { ($0.key, ($0.value.level, $0.value.slot)) }
-    )
     store.expand(fixture.b)
 
-    let selfNode = try XCTUnwrap(store.nodes[key(fixture.a)])
-    let spouseNode = try XCTUnwrap(store.nodes[key(fixture.c)])
-    let parentNode = try XCTUnwrap(store.nodes[key(fixture.b)])
-    let childNode = try XCTUnwrap(store.nodes[key(fixture.d)])
-    let siblingNode = try XCTUnwrap(store.nodes[key(sibling)])
-    XCTAssertEqual(spouseNode.level, selfNode.level)
-    XCTAssertEqual(abs(spouseNode.slot - selfNode.slot), 1)
-    XCTAssertLessThan(parentNode.level, selfNode.level)
-    XCTAssertGreaterThan(childNode.level, selfNode.level)
-    XCTAssertEqual(siblingNode.level, selfNode.level)
-    for (id, position) in originalPositions {
-      XCTAssertEqual(store.nodes[id]?.level, position.0)
-      XCTAssertEqual(store.nodes[id]?.slot, position.1)
-    }
+    let positions = try XCTUnwrap(store.horizontalLayoutResult).positionsByPersonID
+    let selfPosition = try XCTUnwrap(positions[key(fixture.a)])
+    let spousePosition = try XCTUnwrap(positions[key(fixture.c)])
+    let parentPosition = try XCTUnwrap(positions[key(fixture.b)])
+    let childPosition = try XCTUnwrap(positions[key(fixture.d)])
+    let siblingPosition = try XCTUnwrap(positions[key(sibling)])
+    XCTAssertEqual(spousePosition.generation, selfPosition.generation)
+    XCTAssertEqual(abs(spousePosition.x - selfPosition.x), 1, accuracy: 0.000_001)
+    XCTAssertLessThan(parentPosition.generation, selfPosition.generation)
+    XCTAssertGreaterThan(childPosition.generation, selfPosition.generation)
+    XCTAssertEqual(siblingPosition.generation, selfPosition.generation)
   }
 
   func testQuickRegistrationMenuAndSaveBothEnforceSpouseAndParentLimits() throws {
@@ -1859,5 +1944,18 @@ final class FamilyGraphStoreTests: XCTestCase {
         second > first ? abs(positions[first].x - positions[second].x) : nil
       }
     }.sorted()
+  }
+
+  private func renderedCenters(
+    layout: GraphHorizontalLayoutResult<PersistentModelIDBox>
+  ) -> [PersistentModelIDBox: CGPoint] {
+    layout.positionsByPersonID.mapValues { position in
+      GraphCanvasGeometry.beadCenter(
+        position: position,
+        origin: CGPoint(x: 200, y: 300),
+        horizontalUnitWidth: 108,
+        generationHeight: 120
+      )
+    }
   }
 }
