@@ -206,7 +206,91 @@ final class FamilyGraphHorizontalLayoutTests: XCTestCase {
     }
   }
 
+  func testLocalCrossingDeltaMatchesGlobalOracleForEveryLegalAdjacentSwap() throws {
+    let fixtures: [(String, ID, Set<ID>, [ParentChild], [Spouse])] = [
+      (
+        "simple crossing", "C1", ["G", "P1", "P2", "C1", "C2"],
+        [
+          parent("G", "P1"), parent("G", "P2"),
+          parent("P1", "C2"), parent("P2", "C1"),
+        ], []
+      ),
+      (
+        "non-crossing", "C1", ["G", "P1", "P2", "C1", "C2"],
+        [
+          parent("G", "P1"), parent("G", "P2"),
+          parent("P1", "C1"), parent("P2", "C2"),
+        ], []
+      ),
+      (
+        "shared endpoint", "C1", ["P", "C1", "C2", "C3"],
+        [parent("P", "C1"), parent("P", "C2"), parent("P", "C3")], []
+      ),
+      (
+        "multiple parent-child edges", "C1", ["P1", "P2", "P3", "C1", "C2", "C3"],
+        [
+          parent("P1", "C1"), parent("P1", "C2"), parent("P2", "C2"),
+          parent("P2", "C3"), parent("P3", "C1"), parent("P3", "C3"),
+        ], []
+      ),
+      (
+        "canonical grandparents", "Self", canonicalVisible(), canonicalParentEdges(),
+        canonicalSpouses()
+      ),
+      (
+        "six-person", "Self", ["Self", "Father", "Mother", "PGF", "PGM", "MG"],
+        [
+          parent("Father", "Self"), parent("Mother", "Self"),
+          parent("PGF", "Father"), parent("PGM", "Father"), parent("MG", "Mother"),
+        ], [spouse("Father", "Mother"), spouse("PGF", "PGM")]
+      ),
+      (
+        "multiple children and spouse-side", "C1",
+        ["A", "B", "C1", "C2", "C3", "S", "SP1", "SP2"],
+        [
+          parent("A", "C1"), parent("B", "C1"), parent("A", "C2"),
+          parent("B", "C2"), parent("A", "C3"), parent("SP1", "S"),
+          parent("SP2", "S"),
+        ], [spouse("A", "B"), spouse("C1", "S"), spouse("SP1", "SP2")]
+      ),
+      (
+        "shared graph", "Self", ["Self", "A", "B", "Shared", "Other"],
+        [
+          parent("A", "Self"), parent("B", "Self"), parent("Shared", "A"),
+          parent("Shared", "B"), parent("Other", "A"),
+        ], []
+      ),
+    ]
+
+    for (name, root, visible, parents, spouses) in fixtures {
+      try assertLocalDeltasMatchGlobalOracle(
+        name: name,
+        root: root,
+        visible: visible,
+        parents: parents,
+        spouses: spouses
+      )
+    }
+  }
+
   func testPerformanceFixtures() {
+    for count in [20, 50, 100, 300] {
+      let fixture = realisticFixture(personCount: count)
+      let start = ContinuousClock.now
+      let result = layout(
+        root: fixture.root,
+        visible: fixture.visible,
+        parents: fixture.parents,
+        spouses: fixture.spouses
+      )
+      let elapsed = ContinuousClock.now - start
+
+      XCTAssertEqual(result.positionsByPersonID.count, count)
+      print("FamilyGraphHorizontalLayout realistic \(count) nodes: \(elapsed)")
+    }
+  }
+
+  func testDeepChainPerformanceRegression() {
     for count in [20, 50, 100, 300] {
       let ids = (0..<count).map { "Node\($0)" }
       let edges = (1..<count).map { parent(ids[$0], ids[$0 - 1]) }
@@ -215,8 +299,44 @@ final class FamilyGraphHorizontalLayoutTests: XCTestCase {
       let elapsed = ContinuousClock.now - start
 
       XCTAssertEqual(result.positionsByPersonID.count, count)
-      print("FamilyGraphHorizontalLayout performance \(count) nodes: \(elapsed)")
+      print("FamilyGraphHorizontalLayout deep chain \(count) nodes: \(elapsed)")
     }
+  }
+
+  func testRealistic300PhaseBreakdown() throws {
+    let fixture = realisticFixture(personCount: 300)
+    let input = GraphLayoutInput(
+      rootID: fixture.root,
+      visiblePersonIDs: fixture.visible,
+      parentChildEdges: fixture.parents,
+      spouseEdges: fixture.spouses
+    )
+
+    var start = ContinuousClock.now
+    let normalized = FamilyGraphLayoutCore.normalize(input)
+    let normalizeElapsed = ContinuousClock.now - start
+    start = ContinuousClock.now
+    let generations = FamilyGraphLayoutCore.solveGenerations(normalized)
+    let generationElapsed = ContinuousClock.now - start
+    start = ContinuousClock.now
+    let semantic = FamilyGraphLayoutCore.buildSemanticOrder(
+      from: normalized,
+      generations: generations
+    )
+    let semanticElapsed = ContinuousClock.now - start
+    start = ContinuousClock.now
+    let result = FamilyGraphHorizontalLayout.layout(
+      input: normalized,
+      generations: generations,
+      semanticOrder: semantic
+    )
+    let horizontalElapsed = ContinuousClock.now - start
+
+    XCTAssertEqual(result.positionsByPersonID.count, 300)
+    print("FamilyGraphHorizontalLayout realistic 300 normalize: \(normalizeElapsed)")
+    print("FamilyGraphHorizontalLayout realistic 300 generation: \(generationElapsed)")
+    print("FamilyGraphHorizontalLayout realistic 300 semantic: \(semanticElapsed)")
+    print("FamilyGraphHorizontalLayout realistic 300 horizontal: \(horizontalElapsed)")
   }
 
   private func canonicalGrandparents() -> GraphHorizontalLayoutResult<ID> {
@@ -225,6 +345,45 @@ final class FamilyGraphHorizontalLayoutTests: XCTestCase {
       parents: canonicalParentEdges(),
       spouses: canonicalSpouses()
     )
+  }
+
+  private func realisticFixture(personCount: Int) -> (
+    root: ID, visible: Set<ID>, parents: [ParentChild], spouses: [Spouse]
+  ) {
+    let generationRange: ClosedRange<Int>
+    switch personCount {
+    case ...20: generationRange = -3...2
+    case ...50: generationRange = -3...3
+    case ...100: generationRange = -4...4
+    default: generationRange = -5...5
+    }
+    let unitCount = personCount / 2
+    let generations = Array(generationRange)
+    var unitsByGeneration: [Int: [[ID]]] = [:]
+    var visible = Set<ID>()
+    var spouses: [Spouse] = []
+    for unitIndex in 0..<unitCount {
+      let generation = generations[unitIndex % generations.count]
+      let people = ["G\(generation)U\(unitIndex)A", "G\(generation)U\(unitIndex)B"]
+      unitsByGeneration[generation, default: []].append(people)
+      visible.formUnion(people)
+      spouses.append(spouse(people[0], people[1]))
+    }
+
+    var parents: [ParentChild] = []
+    for generation in generations.dropFirst() {
+      let parentUnits = unitsByGeneration[generation - 1, default: []]
+      let childUnits = unitsByGeneration[generation, default: []]
+      for (index, childUnit) in childUnits.enumerated() {
+        for offset in 0..<min(2, parentUnits.count) {
+          let parentUnit = parentUnits[(index + offset) % parentUnits.count]
+          for parentID in parentUnit {
+            parents.append(parent(parentID, childUnit[offset % childUnit.count]))
+          }
+        }
+      }
+    }
+    return (unitsByGeneration[0]![0][0], visible, parents, spouses)
   }
 
   private func canonicalVisible() -> Set<ID> {
@@ -294,5 +453,90 @@ final class FamilyGraphHorizontalLayoutTests: XCTestCase {
         second > first ? abs(positions[first].x - positions[second].x) : nil
       }
     }.sorted()
+  }
+
+  private func assertLocalDeltasMatchGlobalOracle(
+    name: String,
+    root: ID,
+    visible: Set<ID>,
+    parents: [ParentChild],
+    spouses: [Spouse]
+  ) throws {
+    let input = GraphLayoutInput(
+      rootID: root,
+      visiblePersonIDs: visible,
+      parentChildEdges: parents,
+      spouseEdges: spouses
+    )
+    let normalized = FamilyGraphLayoutCore.normalize(input)
+    let generations = FamilyGraphLayoutCore.solveGenerations(normalized)
+    let semantic = FamilyGraphLayoutCore.buildSemanticOrder(
+      from: normalized,
+      generations: generations
+    )
+    let graph = try XCTUnwrap(semantic.unitGraph, name)
+    let orders = FamilyGraphHorizontalLayout.layout(
+      input: normalized,
+      generations: generations,
+      semanticOrder: semantic
+    ).orderedUnitIDsByGeneration
+
+    var evaluatedSwapCount = 0
+    for (generation, order) in orders where order.count > 1 {
+      for index in 0..<(order.count - 1) {
+        var swappedOrder = order
+        swappedOrder.swapAt(index, index + 1)
+        guard
+          respectsContiguity(
+            swappedOrder,
+            ordering: semantic.generationOrderings[generation]
+          )
+        else { continue }
+        evaluatedSwapCount += 1
+
+        let before = FamilyGraphHorizontalLayout.countParentChildCrossings(
+          orderedUnitIDsByGeneration: orders,
+          edges: graph.parentChildEdges
+        )
+        var swappedOrders = orders
+        swappedOrders[generation] = swappedOrder
+        let after = FamilyGraphHorizontalLayout.countParentChildCrossings(
+          orderedUnitIDsByGeneration: swappedOrders,
+          edges: graph.parentChildEdges
+        )
+        let delta = try XCTUnwrap(
+          FamilyGraphHorizontalLayout.crossingDeltaForAdjacentSwap(
+            orderedUnitIDsByGeneration: orders,
+            edges: graph.parentChildEdges,
+            generation: generation,
+            index: index
+          ),
+          "\(name), generation \(generation), index \(index)"
+        )
+        XCTAssertEqual(
+          delta,
+          after - before,
+          "\(name), generation \(generation), index \(index)"
+        )
+      }
+    }
+    XCTAssertGreaterThan(evaluatedSwapCount, 0, name)
+  }
+
+  private func respectsContiguity(
+    _ order: [LayoutUnitID<ID>],
+    ordering: LayoutGenerationOrdering<ID>?
+  ) -> Bool {
+    guard let ordering else { return true }
+    let indices = Dictionary(
+      uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) }
+    )
+    return ordering.contiguityConstraints.allSatisfy { constraint in
+      let memberIndices = constraint.memberUnitIDs.compactMap { indices[$0] }
+      guard let minimum = memberIndices.min(), let maximum = memberIndices.max() else {
+        return true
+      }
+      return maximum - minimum + 1 == memberIndices.count
+    }
   }
 }

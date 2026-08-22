@@ -173,6 +173,166 @@ enum FamilyGraphHorizontalLayout {
     }
   }
 
+  private struct GenerationPair: Hashable {
+    let parent: Int
+  }
+
+  private struct CrossingEvaluationContext<PersonID: Hashable> {
+    let generationByUnit: [LayoutUnitID<PersonID>: Int]
+    let edgesByGenerationPair: [GenerationPair: [LayoutUnitEdge<PersonID>]]
+    let incidentEdgesByUnit: [LayoutUnitID<PersonID>: Set<LayoutUnitEdge<PersonID>>]
+    var indices: [UnitGenerationKey<PersonID>: Int]
+
+    init(
+      orders: [Int: [LayoutUnitID<PersonID>]],
+      edges: Set<LayoutUnitEdge<PersonID>>
+    ) {
+      generationByUnit = Dictionary(
+        uniqueKeysWithValues: orders.flatMap { generation, units in
+          units.map { ($0, generation) }
+        })
+      indices = Dictionary(
+        uniqueKeysWithValues: orders.flatMap { generation, units in
+          units.enumerated().map { (UnitGenerationKey(generation, $0.element), $0.offset) }
+        })
+
+      var edgesByGenerationPair: [GenerationPair: [LayoutUnitEdge<PersonID>]] = [:]
+      var incidentEdgesByUnit: [LayoutUnitID<PersonID>: Set<LayoutUnitEdge<PersonID>>] = [:]
+      for edge in edges {
+        incidentEdgesByUnit[edge.parentUnitID, default: []].insert(edge)
+        incidentEdgesByUnit[edge.childUnitID, default: []].insert(edge)
+        guard let parentGeneration = generationByUnit[edge.parentUnitID],
+          generationByUnit[edge.childUnitID] == parentGeneration + 1
+        else { continue }
+        edgesByGenerationPair[GenerationPair(parent: parentGeneration), default: []].append(edge)
+      }
+      self.edgesByGenerationPair = edgesByGenerationPair
+      self.incidentEdgesByUnit = incidentEdgesByUnit
+    }
+
+    func crossingDelta(
+      swapping first: LayoutUnitID<PersonID>,
+      with second: LayoutUnitID<PersonID>,
+      in generation: Int
+    ) -> Int {
+      let affectedEdges = incidentEdgesByUnit[first, default: []]
+        .union(incidentEdgesByUnit[second, default: []])
+      guard !affectedEdges.isEmpty,
+        let firstIndex = indices[UnitGenerationKey(generation, first)],
+        let secondIndex = indices[UnitGenerationKey(generation, second)]
+      else { return 0 }
+
+      var before = 0
+      var after = 0
+      for pair in [GenerationPair(parent: generation - 1), GenerationPair(parent: generation)] {
+        guard let pairEdges = edgesByGenerationPair[pair] else { continue }
+        let affectedIndices = Set(
+          pairEdges.indices.filter { affectedEdges.contains(pairEdges[$0]) })
+        for firstEdgeIndex in affectedIndices {
+          let firstEdge = pairEdges[firstEdgeIndex]
+          for secondEdgeIndex in pairEdges.indices
+          where secondEdgeIndex != firstEdgeIndex
+            && (!affectedIndices.contains(secondEdgeIndex) || secondEdgeIndex > firstEdgeIndex)
+          {
+            let secondEdge = pairEdges[secondEdgeIndex]
+            before +=
+              Self.crosses(
+                firstEdge,
+                secondEdge,
+                generation: pair.parent,
+                indices: indices
+              ) ? 1 : 0
+            after +=
+              Self.crosses(
+                firstEdge,
+                secondEdge,
+                generation: pair.parent,
+                indices: indices,
+                swapping: (first, firstIndex, second, secondIndex),
+                in: generation
+              ) ? 1 : 0
+          }
+        }
+      }
+      return after - before
+    }
+
+    mutating func recordSwap(
+      _ first: LayoutUnitID<PersonID>,
+      _ second: LayoutUnitID<PersonID>,
+      generation: Int
+    ) {
+      let firstKey = UnitGenerationKey(generation, first)
+      let secondKey = UnitGenerationKey(generation, second)
+      let firstIndex = indices[firstKey]
+      indices[firstKey] = indices[secondKey]
+      indices[secondKey] = firstIndex
+    }
+
+    private static func crosses(
+      _ first: LayoutUnitEdge<PersonID>,
+      _ second: LayoutUnitEdge<PersonID>,
+      generation: Int,
+      indices: [UnitGenerationKey<PersonID>: Int],
+      swapping swap: (
+        first: LayoutUnitID<PersonID>, firstIndex: Int,
+        second: LayoutUnitID<PersonID>, secondIndex: Int
+      )? = nil,
+      in swappedGeneration: Int? = nil
+    ) -> Bool {
+      guard first.parentUnitID != second.parentUnitID,
+        first.childUnitID != second.childUnitID,
+        let firstTop = index(
+          of: first.parentUnitID, generation: generation, indices: indices,
+          swapping: swap, in: swappedGeneration),
+        let secondTop = index(
+          of: second.parentUnitID, generation: generation, indices: indices,
+          swapping: swap, in: swappedGeneration),
+        let firstBottom = index(
+          of: first.childUnitID, generation: generation + 1, indices: indices,
+          swapping: swap, in: swappedGeneration),
+        let secondBottom = index(
+          of: second.childUnitID, generation: generation + 1, indices: indices,
+          swapping: swap, in: swappedGeneration)
+      else { return false }
+      return (firstTop < secondTop) != (firstBottom < secondBottom)
+    }
+
+    private static func index(
+      of unit: LayoutUnitID<PersonID>,
+      generation: Int,
+      indices: [UnitGenerationKey<PersonID>: Int],
+      swapping swap: (
+        first: LayoutUnitID<PersonID>, firstIndex: Int,
+        second: LayoutUnitID<PersonID>, secondIndex: Int
+      )?,
+      in swappedGeneration: Int?
+    ) -> Int? {
+      if generation == swappedGeneration, let swap {
+        if unit == swap.first { return swap.secondIndex }
+        if unit == swap.second { return swap.firstIndex }
+      }
+      return indices[UnitGenerationKey(generation, unit)]
+    }
+  }
+
+  static func crossingDeltaForAdjacentSwap<PersonID: Hashable>(
+    orderedUnitIDsByGeneration orders: [Int: [LayoutUnitID<PersonID>]],
+    edges: Set<LayoutUnitEdge<PersonID>>,
+    generation: Int,
+    index: Int
+  ) -> Int? {
+    guard let order = orders[generation], order.indices.contains(index),
+      order.indices.contains(index + 1)
+    else { return nil }
+    let context = CrossingEvaluationContext(orders: orders, edges: edges)
+    return context.crossingDelta(
+      swapping: order[index],
+      with: order[index + 1],
+      in: generation
+    )
+  }
+
   private static func emptyResult<PersonID: Hashable>(
     diagnostics: Set<GraphLayoutDiagnostic<PersonID>>
   ) -> GraphHorizontalLayoutResult<PersonID> {
@@ -303,28 +463,30 @@ enum FamilyGraphHorizontalLayout {
     iterations: Int
   ) -> [Int: [LayoutUnitID<PersonID>]] {
     var result = orders
+    var crossingContext = CrossingEvaluationContext(
+      orders: orders,
+      edges: graph.parentChildEdges
+    )
     for _ in 0..<max(0, iterations) {
       var improved = false
       for generation in result.keys.sorted() {
         guard var order = result[generation], order.count > 1 else { continue }
         for index in 0..<(order.count - 1) {
-          let before = countParentChildCrossings(
-            orderedUnitIDsByGeneration: result,
-            edges: graph.parentChildEdges
+          let first = order[index]
+          let second = order[index + 1]
+          let delta = crossingContext.crossingDelta(
+            swapping: first,
+            with: second,
+            in: generation
           )
           order.swapAt(index, index + 1)
           guard respectsContiguity(order, ordering: orderings[generation]) else {
             order.swapAt(index, index + 1)
             continue
           }
-          var candidate = result
-          candidate[generation] = order
-          let after = countParentChildCrossings(
-            orderedUnitIDsByGeneration: candidate,
-            edges: graph.parentChildEdges
-          )
-          if after < before {
-            result = candidate
+          if delta < 0 {
+            result[generation] = order
+            crossingContext.recordSwap(first, second, generation: generation)
             improved = true
           } else {
             order.swapAt(index, index + 1)
