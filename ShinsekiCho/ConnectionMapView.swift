@@ -1089,7 +1089,7 @@ enum GraphNodeSurfaceContract {
 // MARK: - グラフの構築・拡張ロジック(コア部分)
 //
 // 「タップ=画面の置き換え」ではなく「タップ=キャンバスへの追加」。
-// 一度配置した人物のlevel/slotは変更しない(位置の安定性を優先)。
+// visible graphのtopology変更時にsemantic/horizontal layoutを再計算する。
 
 enum FamilyGraphStoreLayoutAdapter {
   static func makeInput(
@@ -1227,8 +1227,8 @@ final class FamilyGraphStore {
   ) -> GraphNode {
     let key = PersistentModelIDBox(person.persistentModelID)
     if var existing = nodes[key] {
-      // 配置は固定したまま、後からより短い経路が見つかった場合だけ
-      // 続柄表示に使う経路を更新する。同じ長さなら最初の経路を保つ。
+      // 後からより短い経路が見つかった場合だけ続柄表示に使う経路を更新する。
+      // 同じ長さなら最初の経路を保ち、位置は最新layoutから導出する。
       if path.count < existing.path.count {
         existing.path = path
         nodes[key] = existing

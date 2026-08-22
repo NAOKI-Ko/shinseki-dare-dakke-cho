@@ -123,6 +123,16 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertEqual(layout.positionsByPersonID[key(fixture.d)]?.generation, 1)
   }
 
+  func testGraphNodeContainsOnlyPersonAndPathWithoutLayoutState() throws {
+    let fixture = try makeFixture()
+    let node = GraphNode(person: fixture.a, path: [.parent, .child])
+
+    XCTAssertEqual(
+      Set(Mirror(reflecting: node).children.compactMap(\.label)),
+      ["person", "path"]
+    )
+  }
+
   func testResetProducesRootOnlyHorizontalLayoutAndReplacesPreviousResult() throws {
     let fixture = try makeFixture()
     let store = FamilyGraphStore()
@@ -704,6 +714,26 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertLessThan(elapsed, 0.05)
   }
 
+  func testIntroOverviewHandlesRootOnlyAndEmptyLayout() {
+    let viewport = CGSize(width: 390, height: 420)
+    let rootOnly = GraphIntroLayout.overview(
+      positions: [LayoutPosition(generation: 0, x: 0)],
+      viewport: viewport,
+      horizontalUnitWidth: 108,
+      generationHeight: 120
+    )
+    let empty = GraphIntroLayout.overview(
+      positions: [],
+      viewport: viewport,
+      horizontalUnitWidth: 108,
+      generationHeight: 120
+    )
+
+    XCTAssertEqual(rootOnly.scale, 0.6)
+    XCTAssertEqual(rootOnly.offset, .zero)
+    XCTAssertEqual(empty, GraphViewportTransform(scale: 0.6, offset: .zero))
+  }
+
   func testContinuousLayoutPositionMapsFractionalCoordinatesWithoutRounding() {
     let origin = CGPoint(x: 200, y: 300)
     let positive = GraphCanvasGeometry.beadCenter(
@@ -763,6 +793,19 @@ final class FamilyGraphStoreTests: XCTestCase {
         generationHeight: 120,
         hitRadius: 30
       )
+    )
+  }
+
+  func testHitTestingDoesNotFabricateMissingLayoutPosition() {
+    XCTAssertNil(
+      GraphHitTestGeometry.nearestNodeID(
+        to: CGPoint(x: 200, y: 300),
+        positions: ["Positioned": LayoutPosition(generation: 0, x: 2.5)],
+        origin: CGPoint(x: 200, y: 300),
+        horizontalUnitWidth: 108,
+        generationHeight: 120,
+        hitRadius: 30
+      ) as String?
     )
   }
 
@@ -1698,6 +1741,26 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertFalse(remainingIndividualEdges.contains { edge in
       [key(c), key(d)].contains(edge.from) || [key(c), key(d)].contains(edge.to)
     })
+
+    let completePositions = try XCTUnwrap(store.horizontalLayoutResult).positionsByPersonID
+    let missingSpousePosition = completePositions.filter { $0.key != key(b) }
+    let missingChildPosition = completePositions.filter { $0.key != key(c) }
+
+    XCTAssertTrue(
+      GraphCoupleRenderBuilder.build(
+        nodes: store.nodes,
+        edges: store.edges,
+        positions: missingSpousePosition
+      ).knots.isEmpty
+    )
+    XCTAssertEqual(
+      GraphCoupleRenderBuilder.build(
+        nodes: store.nodes,
+        edges: store.edges,
+        positions: missingChildPosition
+      ).knots.first?.commonChildren,
+      [key(d)]
+    )
   }
 
   func testLaterSpouseAndSelectedExistingChildProduceCoupleKnotModel() throws {
