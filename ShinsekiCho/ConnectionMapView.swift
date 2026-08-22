@@ -1079,11 +1079,33 @@ enum GraphNodeSurfaceContract {
 // 「タップ=画面の置き換え」ではなく「タップ=キャンバスへの追加」。
 // 一度配置した人物のlevel/slotは変更しない(位置の安定性を優先)。
 
+enum FamilyGraphStoreLayoutAdapter {
+  static func makeInput(
+    rootID: PersistentModelIDBox,
+    nodes: [PersistentModelIDBox: GraphNode],
+    edges: [GraphEdge]
+  ) -> GraphLayoutInput<PersistentModelIDBox> {
+    GraphLayoutInput(
+      rootID: rootID,
+      visiblePersonIDs: Set(nodes.keys),
+      parentChildEdges: edges.compactMap { edge in
+        guard edge.kind == .parentChild else { return nil }
+        return GraphLayoutParentChildEdge(parentID: edge.from, childID: edge.to)
+      },
+      spouseEdges: edges.compactMap { edge in
+        guard edge.kind == .spouse else { return nil }
+        return GraphLayoutSpouseEdge(edge.from, edge.to)
+      }
+    )
+  }
+}
+
 @Observable
 final class FamilyGraphStore {
   private(set) var nodes: [PersistentModelIDBox: GraphNode] = [:]
   private(set) var edges: [GraphEdge] = []
   private(set) var renderSnapshot = FamilyGraphRenderSnapshot()
+  private(set) var horizontalLayoutResult: GraphHorizontalLayoutResult<PersistentModelIDBox>?
   var coupleRenderModel: GraphCoupleRenderModel { renderSnapshot.coupleRenderModel }
   private var rootID: PersistentModelIDBox?
 
@@ -1094,13 +1116,26 @@ final class FamilyGraphStore {
     renderSnapshot = FamilyGraphRenderSnapshot()
     rootID = PersistentModelIDBox(selfPerson.persistentModelID)
     place(selfPerson, level: 0, preferredSlot: 0, path: [])
+    refreshHorizontalLayout()
     refreshRenderSnapshot()
   }
 
   /// 指定した人物の直接のつながり(親・子・配偶者)を展開する。
   /// 既にキャンバスにいる人物には新しいノードを作らず、エッジだけ追加する。
   func expand(_ person: Person) {
-    guard let center = nodes[PersistentModelIDBox(person.persistentModelID)] else { return }
+    let expansion = expandGraphOnly(person)
+    guard expansion.wasVisible else { return }
+    finalizeGraphMutation(recomputeHorizontalLayout: expansion.topologyChanged)
+  }
+
+  private func expandGraphOnly(_ person: Person) -> (
+    wasVisible: Bool, topologyChanged: Bool
+  ) {
+    guard let center = nodes[PersistentModelIDBox(person.persistentModelID)] else {
+      return (false, false)
+    }
+    let nodeCountBefore = nodes.count
+    let edgeCountBefore = edges.count
 
     for (index, parent) in person.parents.enumerated() {
       _ = placeIfNeeded(
@@ -1135,8 +1170,7 @@ final class FamilyGraphStore {
     }
     // 兄弟姉妹は「共通の親」を介して自動的に見えるようになるため、
     // ここでは明示的なノード追加はしない(親を展開すれば子として現れる)。
-    refreshShortestPaths()
-    refreshRenderSnapshot()
+    return (true, nodes.count != nodeCountBefore || edges.count != edgeCountBefore)
   }
 
   /// 自分から表示対象までの最短経路上にいる人物を順に展開する。
@@ -1156,13 +1190,40 @@ final class FamilyGraphStore {
     }
 
     var expanded: Set<PersistentModelIDBox> = []
+    var topologyChanged = false
     for person in peopleToExpand {
       let id = PersistentModelIDBox(person.persistentModelID)
       guard nodes[id] != nil else { continue }
-      expand(person)
-      expanded.insert(id)
+      let expansion = expandGraphOnly(person)
+      if expansion.wasVisible {
+        expanded.insert(id)
+      }
+      topologyChanged = topologyChanged || expansion.topologyChanged
     }
+    finalizeGraphMutation(recomputeHorizontalLayout: topologyChanged)
     return expanded
+  }
+
+  private func finalizeGraphMutation(recomputeHorizontalLayout: Bool) {
+    refreshShortestPaths()
+    if recomputeHorizontalLayout {
+      refreshHorizontalLayout()
+    }
+    refreshRenderSnapshot()
+  }
+
+  private func refreshHorizontalLayout() {
+    guard let rootID else {
+      horizontalLayoutResult = nil
+      return
+    }
+    horizontalLayoutResult = FamilyGraphHorizontalLayout.layout(
+      FamilyGraphStoreLayoutAdapter.makeInput(
+        rootID: rootID,
+        nodes: nodes,
+        edges: edges
+      )
+    )
   }
 
   private func placeIfNeeded(

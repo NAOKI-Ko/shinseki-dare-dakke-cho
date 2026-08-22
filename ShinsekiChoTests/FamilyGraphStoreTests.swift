@@ -14,6 +14,11 @@ final class FamilyGraphStoreTests: XCTestCase {
     let d: Person
   }
 
+  private struct AncestorFixture {
+    let container: ModelContainer
+    let people: [String: Person]
+  }
+
   private func makeFixture() throws -> Fixture {
     let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
     let container = try ModelContainer(
@@ -31,6 +36,37 @@ final class FamilyGraphStoreTests: XCTestCase {
     RelationshipManager.setSpouse(a, c)
     RelationshipManager.addParentChild(parent: a, child: d)
     return Fixture(container: container, a: a, b: b, c: c, d: d)
+  }
+
+  private func makeAncestorFixture(includeMaternalGrandmother: Bool = true) throws
+    -> AncestorFixture
+  {
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try ModelContainer(
+      for: Person.self,
+      Gathering.self,
+      configurations: configuration
+    )
+    let names = ["Self", "Father", "Mother", "PGF", "PGM", "MGF", "MGM"]
+    let people = Dictionary(
+      uniqueKeysWithValues: names.map { name in
+        (name, Person(name: name, isSelf: name == "Self"))
+      }
+    )
+    people.values.forEach(container.mainContext.insert)
+    try container.mainContext.save()
+    RelationshipManager.setSpouse(people["Father"]!, people["Mother"]!)
+    RelationshipManager.setSpouse(people["PGF"]!, people["PGM"]!)
+    RelationshipManager.addParentChild(parent: people["Father"]!, child: people["Self"]!)
+    RelationshipManager.addParentChild(parent: people["Mother"]!, child: people["Self"]!)
+    RelationshipManager.addParentChild(parent: people["PGF"]!, child: people["Father"]!)
+    RelationshipManager.addParentChild(parent: people["PGM"]!, child: people["Father"]!)
+    RelationshipManager.addParentChild(parent: people["MGF"]!, child: people["Mother"]!)
+    if includeMaternalGrandmother {
+      RelationshipManager.setSpouse(people["MGF"]!, people["MGM"]!)
+      RelationshipManager.addParentChild(parent: people["MGM"]!, child: people["Mother"]!)
+    }
+    return AncestorFixture(container: container, people: people)
   }
 
   private func key(_ person: Person) -> PersistentModelIDBox {
@@ -82,6 +118,159 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertEqual(store.nodes[key(fixture.b)]?.path, [.parent])
     XCTAssertEqual(store.nodes[key(fixture.c)]?.path, [.spouse])
     XCTAssertEqual(store.nodes[key(fixture.d)]?.path, [.child])
+
+    let layout = try XCTUnwrap(store.horizontalLayoutResult)
+    XCTAssertEqual(Set(layout.positionsByPersonID.keys), Set(store.nodes.keys))
+    XCTAssertEqual(layout.positionsByPersonID[key(fixture.b)]?.generation, -1)
+    XCTAssertEqual(layout.positionsByPersonID[key(fixture.a)]?.generation, 0)
+    XCTAssertEqual(layout.positionsByPersonID[key(fixture.c)]?.generation, 0)
+    XCTAssertEqual(layout.positionsByPersonID[key(fixture.d)]?.generation, 1)
+  }
+
+  func testResetProducesRootOnlyHorizontalLayoutAndReplacesPreviousResult() throws {
+    let fixture = try makeFixture()
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.a)
+
+    var layout = try XCTUnwrap(store.horizontalLayoutResult)
+    XCTAssertEqual(Set(layout.positionsByPersonID.keys), [key(fixture.a)])
+    XCTAssertEqual(layout.positionsByPersonID[key(fixture.a)]?.generation, 0)
+    XCTAssertEqual(layout.positionsByPersonID[key(fixture.a)]?.x, 0)
+
+    store.expand(fixture.a)
+    XCTAssertEqual(store.horizontalLayoutResult?.positionsByPersonID.count, 4)
+    store.reset(with: fixture.b)
+
+    layout = try XCTUnwrap(store.horizontalLayoutResult)
+    XCTAssertEqual(Set(layout.positionsByPersonID.keys), [key(fixture.b)])
+    XCTAssertNil(layout.positionsByPersonID[key(fixture.a)])
+  }
+
+  func testLayoutAdapterPreservesParentChildEdgeDirection() throws {
+    let fixture = try makeFixture()
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.a)
+    store.expand(fixture.a)
+    let parentID = key(fixture.b)
+    let childID = key(fixture.a)
+
+    let input = FamilyGraphStoreLayoutAdapter.makeInput(
+      rootID: childID,
+      nodes: store.nodes,
+      edges: store.edges
+    )
+
+    XCTAssertTrue(
+      input.parentChildEdges.contains(
+        GraphLayoutParentChildEdge(parentID: parentID, childID: childID)
+      )
+    )
+    XCTAssertFalse(
+      input.parentChildEdges.contains(
+        GraphLayoutParentChildEdge(parentID: childID, childID: parentID)
+      )
+    )
+  }
+
+  func testGenerationContradictionIsRetainedInStoreLayoutDiagnostics() throws {
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try ModelContainer(
+      for: Person.self,
+      Gathering.self,
+      configurations: configuration
+    )
+    let a = Person(name: "A", isSelf: true)
+    let b = Person(name: "B")
+    let c = Person(name: "C")
+    [a, b, c].forEach(container.mainContext.insert)
+    try container.mainContext.save()
+    RelationshipManager.addParentChild(parent: a, child: b)
+    RelationshipManager.addParentChild(parent: b, child: c)
+    RelationshipManager.addParentChild(parent: a, child: c)
+    let store = FamilyGraphStore()
+
+    store.reset(with: a)
+    store.expand(a)
+    store.expand(b)
+    let layout = try XCTUnwrap(store.horizontalLayoutResult)
+
+    XCTAssertTrue(layout.positionsByPersonID.isEmpty)
+    XCTAssertTrue(
+      layout.diagnostics.contains {
+        if case .inconsistentGeneration = $0 { return true }
+        return false
+      }
+    )
+  }
+
+  func testCanonicalGrandparentsStoreLayoutHasAtomicNonInterleavedBranches() throws {
+    let fixture = try makeAncestorFixture()
+    let store = FamilyGraphStore()
+    expandAncestorGraph(store, people: fixture.people, paternalFirst: true)
+    let layout = try XCTUnwrap(store.horizontalLayoutResult)
+
+    XCTAssertEqual(layout.parentChildCrossingCount, 0)
+    XCTAssertEqual(layout.positionsByPersonID.count, store.nodes.count)
+    assertCoupleIsAtomic("PGF", "PGM", layout: layout, people: fixture.people)
+    assertCoupleIsAtomic("MGF", "MGM", layout: layout, people: fixture.people)
+    assertAncestorBranchesDoNotInterleave(layout: layout, people: fixture.people)
+  }
+
+  func testSixPersonCounterexampleStoreLayoutKeepsCoupleTogether() throws {
+    let fixture = try makeAncestorFixture(includeMaternalGrandmother: false)
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.people["Self"]!)
+    for name in ["Self", "Father", "Mother", "PGF"] {
+      store.expand(fixture.people[name]!)
+    }
+    let layout = try XCTUnwrap(store.horizontalLayoutResult)
+    let pgfX = try XCTUnwrap(layout.positionsByPersonID[key(fixture.people["PGF"]!)]?.x)
+    let pgmX = try XCTUnwrap(layout.positionsByPersonID[key(fixture.people["PGM"]!)]?.x)
+    let maternalX = try XCTUnwrap(layout.positionsByPersonID[key(fixture.people["MGF"]!)]?.x)
+
+    XCTAssertEqual(layout.positionsByPersonID.count, 6)
+    XCTAssertEqual(layout.parentChildCrossingCount, 0)
+    XCTAssertEqual(abs(pgfX - pgmX), 1, accuracy: 0.000_001)
+    XCTAssertFalse(maternalX > min(pgfX, pgmX) && maternalX < max(pgfX, pgmX))
+  }
+
+  func testStoreHorizontalLayoutIsExpansionOrderIndependent() throws {
+    let fixture = try makeAncestorFixture()
+    let paternalFirst = FamilyGraphStore()
+    let maternalFirst = FamilyGraphStore()
+    expandAncestorGraph(paternalFirst, people: fixture.people, paternalFirst: true)
+    expandAncestorGraph(maternalFirst, people: fixture.people, paternalFirst: false)
+    let first = try XCTUnwrap(paternalFirst.horizontalLayoutResult)
+    let second = try XCTUnwrap(maternalFirst.horizontalLayoutResult)
+
+    XCTAssertEqual(
+      first.positionsByPersonID.mapValues(\.generation),
+      second.positionsByPersonID.mapValues(\.generation)
+    )
+    XCTAssertEqual(first.parentChildCrossingCount, second.parentChildCrossingCount)
+    XCTAssertEqual(layoutDistanceMultiset(first), layoutDistanceMultiset(second))
+    assertAncestorBranchesDoNotInterleave(layout: first, people: fixture.people)
+    assertAncestorBranchesDoNotInterleave(layout: second, people: fixture.people)
+  }
+
+  func testLateDiscoveryReflowsLatestVisibleGraphWithFinitePositions() throws {
+    let fixture = try makeAncestorFixture()
+    let store = FamilyGraphStore()
+    store.reset(with: fixture.people["Self"]!)
+    for name in ["Self", "Father", "PGF"] {
+      store.expand(fixture.people[name]!)
+    }
+    let beforeIDs = Set(try XCTUnwrap(store.horizontalLayoutResult).positionsByPersonID.keys)
+
+    for name in ["Mother", "MGF"] {
+      store.expand(fixture.people[name]!)
+    }
+    let after = try XCTUnwrap(store.horizontalLayoutResult)
+
+    XCTAssertGreaterThan(after.positionsByPersonID.count, beforeIDs.count)
+    XCTAssertEqual(Set(after.positionsByPersonID.keys), Set(store.nodes.keys))
+    XCTAssertTrue(after.positionsByPersonID.values.allSatisfy { $0.x.isFinite })
+    XCTAssertEqual(after.parentChildCrossingCount, 0)
   }
 
   func testExpandingRelatedParentDoesNotDuplicateExistingCommonChild() throws {
@@ -357,7 +546,9 @@ final class FamilyGraphStoreTests: XCTestCase {
     let relatives = (1...24).map { Person(name: "親戚\($0)") }
     relatives.forEach(container.mainContext.insert)
     try container.mainContext.save()
-    relatives.forEach { RelationshipManager.addParentChild(parent: root, child: $0) }
+    for relative in relatives {
+      RelationshipManager.addParentChild(parent: root, child: relative)
+    }
 
     let store = FamilyGraphStore()
     let startedAt = ProcessInfo.processInfo.systemUptime
@@ -407,6 +598,11 @@ final class FamilyGraphStoreTests: XCTestCase {
     XCTAssertEqual(expanded, Set([me, spouse, spouseParent, spouseBrother].map(key)))
     XCTAssertNotNil(store.nodes[key(nephew)])
     XCTAssertEqual(store.nodes[key(nephew)]?.path, route.steps)
+    XCTAssertEqual(
+      Set(try XCTUnwrap(store.horizontalLayoutResult).positionsByPersonID.keys),
+      Set(store.nodes.keys)
+    )
+    XCTAssertEqual(store.renderSnapshot.nodes.count, store.nodes.count)
   }
 
   func testPathEmphasisContainsOnlyEdgesOnShortestRoute() throws {
@@ -1603,5 +1799,65 @@ final class FamilyGraphStoreTests: XCTestCase {
             || (edge.from == key(child) && edge.to == key(a)))
       }
     }))
+  }
+
+  private func expandAncestorGraph(
+    _ store: FamilyGraphStore,
+    people: [String: Person],
+    paternalFirst: Bool
+  ) {
+    store.reset(with: people["Self"]!)
+    store.expand(people["Self"]!)
+    let branchOrder = paternalFirst ? ["Father", "Mother"] : ["Mother", "Father"]
+    for branch in branchOrder {
+      store.expand(people[branch]!)
+    }
+    let grandparentOrder = paternalFirst ? ["PGF", "MGF"] : ["MGF", "PGF"]
+    for grandparent in grandparentOrder {
+      store.expand(people[grandparent]!)
+    }
+  }
+
+  private func assertCoupleIsAtomic(
+    _ first: String,
+    _ second: String,
+    layout: GraphHorizontalLayoutResult<PersistentModelIDBox>,
+    people: [String: Person],
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let firstX = layout.positionsByPersonID[key(people[first]!)]!.x
+    let secondX = layout.positionsByPersonID[key(people[second]!)]!.x
+    XCTAssertEqual(abs(firstX - secondX), 1, accuracy: 0.000_001, file: file, line: line)
+  }
+
+  private func assertAncestorBranchesDoNotInterleave(
+    layout: GraphHorizontalLayoutResult<PersistentModelIDBox>,
+    people: [String: Person],
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let paternal = ["PGF", "PGM"].map {
+      layout.positionsByPersonID[key(people[$0]!)]!.x
+    }
+    let maternal = ["MGF", "MGM"].map {
+      layout.positionsByPersonID[key(people[$0]!)]!.x
+    }
+    XCTAssertTrue(
+      paternal.max()! < maternal.min()! || maternal.max()! < paternal.min()!,
+      file: file,
+      line: line
+    )
+  }
+
+  private func layoutDistanceMultiset(
+    _ layout: GraphHorizontalLayoutResult<PersistentModelIDBox>
+  ) -> [Double] {
+    let positions = Array(layout.positionsByPersonID.values)
+    return positions.indices.flatMap { first in
+      positions.indices.compactMap { second in
+        second > first ? abs(positions[first].x - positions[second].x) : nil
+      }
+    }.sorted()
   }
 }
