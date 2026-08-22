@@ -274,33 +274,111 @@ final class FamilyGraphHorizontalLayoutTests: XCTestCase {
   }
 
   func testPerformanceFixtures() {
-    for count in [20, 50, 100, 300] {
+    for count in [100, 300, 500] {
       let fixture = realisticFixture(personCount: count)
-      let start = ContinuousClock.now
-      let result = layout(
+      let measurement = measureLayoutStages(
         root: fixture.root,
         visible: fixture.visible,
         parents: fixture.parents,
         spouses: fixture.spouses
       )
-      let elapsed = ContinuousClock.now - start
 
-      XCTAssertEqual(result.positionsByPersonID.count, count)
-      print("FamilyGraphHorizontalLayout realistic \(count) nodes: \(elapsed)")
+      XCTAssertEqual(measurement.result.positionsByPersonID.count, count)
+      XCTAssertFalse(measurement.fastPathHit)
+      print("FamilyGraphHorizontalLayout realistic \(count) semantic: \(measurement.semantic)")
+      print("FamilyGraphHorizontalLayout realistic \(count) horizontal: \(measurement.horizontal)")
+      print("FamilyGraphHorizontalLayout realistic \(count) total: \(measurement.total)")
+      print("FamilyGraphHorizontalLayout realistic \(count) fast path: \(measurement.fastPathHit)")
     }
   }
 
   func testDeepChainPerformanceRegression() {
-    for count in [20, 50, 100, 300] {
+    for count in [50, 100, 200, 300, 500] {
       let ids = (0..<count).map { "Node\($0)" }
       let edges = (1..<count).map { parent(ids[$0], ids[$0 - 1]) }
-      let start = ContinuousClock.now
-      let result = layout(root: ids[0], visible: Set(ids), parents: edges)
-      let elapsed = ContinuousClock.now - start
+      let measurement = measureLayoutStages(
+        root: ids[0],
+        visible: Set(ids),
+        parents: edges,
+        spouses: []
+      )
 
-      XCTAssertEqual(result.positionsByPersonID.count, count)
-      print("FamilyGraphHorizontalLayout deep chain \(count) nodes: \(elapsed)")
+      XCTAssertEqual(measurement.result.positionsByPersonID.count, count)
+      XCTAssertTrue(measurement.fastPathHit)
+      print("FamilyGraphHorizontalLayout deep chain \(count) semantic: \(measurement.semantic)")
+      print("FamilyGraphHorizontalLayout deep chain \(count) horizontal: \(measurement.horizontal)")
+      print("FamilyGraphHorizontalLayout deep chain \(count) total: \(measurement.total)")
+      print("FamilyGraphHorizontalLayout deep chain \(count) fast path: \(measurement.fastPathHit)")
     }
+  }
+
+  func testSimpleGenerationChainFastPathMatchesGenericHorizontalPositions() {
+    let ids = (0..<10).map { "Node\($0)" }
+    let input = FamilyGraphLayoutCore.normalize(
+      GraphLayoutInput(
+        rootID: ids[4],
+        visiblePersonIDs: Set(ids),
+        parentChildEdges: (1..<ids.count).map { parent(ids[$0], ids[$0 - 1]) }
+      )
+    )
+    let generations = FamilyGraphLayoutCore.solveGenerations(input)
+    let fastSemantic = FamilyGraphLayoutCore.buildSemanticOrder(
+      from: input, generations: generations
+    )
+    let genericSemantic = FamilyGraphLayoutCore.buildSemanticOrder(
+      from: input, generations: generations, useSimpleChainFastPath: false
+    )
+
+    XCTAssertEqual(
+      FamilyGraphHorizontalLayout.layout(
+        input: input, generations: generations, semanticOrder: fastSemantic
+      ),
+      FamilyGraphHorizontalLayout.layout(
+        input: input, generations: generations, semanticOrder: genericSemantic
+      )
+    )
+  }
+
+  private func measureLayoutStages(
+    root: ID,
+    visible: Set<ID>,
+    parents: [ParentChild],
+    spouses: [Spouse]
+  ) -> (
+    result: GraphHorizontalLayoutResult<ID>,
+    semantic: Duration,
+    horizontal: Duration,
+    total: Duration,
+    fastPathHit: Bool
+  ) {
+    let totalStart = ContinuousClock.now
+    let input = GraphLayoutInput(
+      rootID: root,
+      visiblePersonIDs: visible,
+      parentChildEdges: parents,
+      spouseEdges: spouses
+    )
+    let normalized = FamilyGraphLayoutCore.normalize(input)
+    let generations = FamilyGraphLayoutCore.solveGenerations(normalized)
+    let semanticStart = ContinuousClock.now
+    let semantic = FamilyGraphLayoutCore.buildSemanticOrder(
+      from: normalized,
+      generations: generations
+    )
+    let semanticElapsed = ContinuousClock.now - semanticStart
+    let horizontalStart = ContinuousClock.now
+    let result = FamilyGraphHorizontalLayout.layout(
+      input: normalized,
+      generations: generations,
+      semanticOrder: semantic
+    )
+    return (
+      result,
+      semanticElapsed,
+      ContinuousClock.now - horizontalStart,
+      ContinuousClock.now - totalStart,
+      FamilyGraphLayoutCore.isSimpleGenerationChain(normalized, generations: generations)
+    )
   }
 
   func testRealistic300PhaseBreakdown() throws {

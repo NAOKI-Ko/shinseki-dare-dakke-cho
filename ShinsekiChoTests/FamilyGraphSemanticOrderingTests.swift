@@ -35,6 +35,24 @@ final class FamilyGraphSemanticOrderingTests: XCTestCase {
     )
   }
 
+  private func chainInput(count: Int, rootIndex: Int = 0) -> NormalizedGraphLayoutInput<ID> {
+    let ids = (0..<count).map { "Chain\($0)" }
+    return FamilyGraphLayoutCore.normalize(
+      GraphLayoutInput(
+        rootID: ids[rootIndex],
+        visiblePersonIDs: Set(ids),
+        parentChildEdges: (1..<count).map { parent(ids[$0], ids[$0 - 1]) }
+      )
+    )
+  }
+
+  private func isEligible(_ input: NormalizedGraphLayoutInput<ID>) -> Bool {
+    FamilyGraphLayoutCore.isSimpleGenerationChain(
+      input,
+      generations: FamilyGraphLayoutCore.solveGenerations(input)
+    )
+  }
+
   private func canonicalGrandparents(
     parents: [ParentChild]? = nil,
     spouses: [Spouse]? = nil
@@ -268,6 +286,127 @@ final class FamilyGraphSemanticOrderingTests: XCTestCase {
     XCTAssertFalse(result.isGenerationConsistent)
   }
 
+  func testImmediateChildBlocksMatchLegacyContainmentDefinition() {
+    let chainIDs = (0..<30).map { "Chain\($0)" }
+    let chain = order(
+      rootID: chainIDs[0],
+      visible: Set(chainIDs),
+      parents: (1..<chainIDs.count).map { parent(chainIDs[$0], chainIDs[$0 - 1]) }
+    )
+    let siblings = order(
+      rootID: "Self",
+      visible: ["Self", "P", "S1", "S2", "S3", "GP1", "GP2"],
+      parents: [
+        parent("P", "Self"), parent("P", "S1"), parent("P", "S2"),
+        parent("P", "S3"), parent("GP1", "P"), parent("GP2", "P"),
+      ],
+      spouses: [spouse("GP1", "GP2")]
+    )
+    let coupleWithChildren = order(
+      rootID: "C1",
+      visible: ["A", "B", "C1", "C2", "C3", "GP1", "GP2"],
+      parents: [
+        parent("A", "C1"), parent("B", "C1"),
+        parent("A", "C2"), parent("B", "C2"),
+        parent("A", "C3"), parent("B", "C3"),
+        parent("GP1", "A"), parent("GP2", "A"),
+      ],
+      spouses: [spouse("A", "B"), spouse("GP1", "GP2")]
+    )
+    let results = [canonicalGrandparents(), chain, siblings, coupleWithChildren]
+
+    for result in results {
+      assertChildBlocksMatchLegacyContainmentDefinition(result)
+    }
+  }
+
+  func testSimpleGenerationChainFastPathEligibilityIsStrict() {
+    XCTAssertTrue(isEligible(chainInput(count: 1)))
+    XCTAssertTrue(isEligible(chainInput(count: 2)))
+    XCTAssertTrue(isEligible(chainInput(count: 10)))
+    XCTAssertTrue(isEligible(chainInput(count: 100)))
+
+    let spouseInput = FamilyGraphLayoutCore.normalize(
+      GraphLayoutInput(
+        rootID: "A", visiblePersonIDs: ["A", "B"],
+        spouseEdges: [spouse("A", "B")]
+      )
+    )
+    XCTAssertFalse(isEligible(spouseInput))
+
+    let siblings = FamilyGraphLayoutCore.normalize(
+      GraphLayoutInput(
+        rootID: "C1", visiblePersonIDs: ["P", "C1", "C2"],
+        parentChildEdges: [parent("P", "C1"), parent("P", "C2")]
+      )
+    )
+    XCTAssertFalse(isEligible(siblings))
+
+    let twoParents = FamilyGraphLayoutCore.normalize(
+      GraphLayoutInput(
+        rootID: "C", visiblePersonIDs: ["P1", "P2", "C"],
+        parentChildEdges: [parent("P1", "C"), parent("P2", "C")]
+      )
+    )
+    XCTAssertFalse(isEligible(twoParents))
+
+    let disconnected = FamilyGraphLayoutCore.normalize(
+      GraphLayoutInput(rootID: "A", visiblePersonIDs: ["A", "B"])
+    )
+    XCTAssertFalse(isEligible(disconnected))
+
+    let contradiction = FamilyGraphLayoutCore.normalize(
+      GraphLayoutInput(
+        rootID: "A", visiblePersonIDs: ["A", "B"],
+        parentChildEdges: [parent("A", "B"), parent("B", "A")]
+      )
+    )
+    XCTAssertFalse(isEligible(contradiction))
+
+    let chain = chainInput(count: 2)
+    let sameGeneration = GraphGenerationSolution(
+      generations: ["Chain0": 0, "Chain1": 0], diagnostics: []
+    )
+    XCTAssertFalse(
+      FamilyGraphLayoutCore.isSimpleGenerationChain(chain, generations: sameGeneration)
+    )
+  }
+
+  func testSimpleGenerationChainFastPathMatchesGenericSemanticResult() {
+    for rootIndex in [0, 3, 9] {
+      let input = chainInput(count: 10, rootIndex: rootIndex)
+      let generations = FamilyGraphLayoutCore.solveGenerations(input)
+      let fast = FamilyGraphLayoutCore.buildSemanticOrder(
+        from: input,
+        generations: generations
+      )
+      let generic = FamilyGraphLayoutCore.buildSemanticOrder(
+        from: input,
+        generations: generations,
+        useSimpleChainFastPath: false
+      )
+      XCTAssertEqual(fast.unitGraph, generic.unitGraph)
+      XCTAssertEqual(fast.diagnostics, generic.diagnostics)
+      XCTAssertEqual(
+        fast.generationOrderings.mapValues(\.unitIDs),
+        generic.generationOrderings.mapValues(\.unitIDs)
+      )
+      XCTAssertTrue(fast.blocks.isEmpty)
+      XCTAssertTrue(
+        fast.generationOrderings.values.allSatisfy {
+          $0.unitIDs.count == 1
+            && $0.contiguityConstraints.isEmpty
+            && $0.orderingBuckets.isEmpty
+        }
+      )
+      XCTAssertTrue(
+        generic.generationOrderings.values.flatMap(\.contiguityConstraints).allSatisfy {
+          $0.memberUnitIDs.count == 1
+        }
+      )
+    }
+  }
+
   private func hasBlock(
     _ result: LayoutSemanticOrder<ID>,
     containing included: Set<LayoutUnitID<ID>>,
@@ -276,6 +415,26 @@ final class FamilyGraphSemanticOrderingTests: XCTestCase {
     result.blocks.contains {
       included.isSubset(of: $0.memberUnitIDs)
         && excluded.isDisjoint(with: $0.memberUnitIDs)
+    }
+  }
+
+  private func assertChildBlocksMatchLegacyContainmentDefinition(
+    _ result: LayoutSemanticOrder<ID>,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    for block in result.blocks {
+      let strictSubsets = result.blocks.filter {
+        $0.memberUnitIDs != block.memberUnitIDs
+          && $0.memberUnitIDs.isSubset(of: block.memberUnitIDs)
+      }
+      let expectedChildren = strictSubsets.filter { candidate in
+        !strictSubsets.contains { other in
+          candidate.id != other.id
+            && candidate.memberUnitIDs.isSubset(of: other.memberUnitIDs)
+        }
+      }.map(\.id)
+      XCTAssertEqual(block.childBlockIDs, Set(expectedChildren), file: file, line: line)
     }
   }
 }

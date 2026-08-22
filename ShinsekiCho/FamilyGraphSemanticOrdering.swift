@@ -77,7 +77,8 @@ struct LayoutSemanticOrder<PersonID: Hashable>: Equatable {
 extension FamilyGraphLayoutCore {
   static func buildSemanticOrder<PersonID: Hashable>(
     from input: NormalizedGraphLayoutInput<PersonID>,
-    generations: GraphGenerationSolution<PersonID>
+    generations: GraphGenerationSolution<PersonID>,
+    useSimpleChainFastPath: Bool = true
   ) -> LayoutSemanticOrder<PersonID> {
     guard generations.isConsistent, !generations.generations.isEmpty,
       generations.generations[input.rootID] != nil
@@ -96,6 +97,17 @@ extension FamilyGraphLayoutCore {
       units: unitResult.units,
       rootID: input.rootID
     )
+    if useSimpleChainFastPath, isSimpleGenerationChain(input, generations: generations) {
+      return LayoutSemanticOrder(
+        unitGraph: unitGraph,
+        blocks: [],
+        generationOrderings: buildSimpleChainGenerationOrderings(
+          unitGraph: unitGraph,
+          generations: generations.generations
+        ),
+        diagnostics: unitResult.diagnostics
+      )
+    }
     let rawBlocks = extractBlockCandidates(from: unitGraph)
     let mergedBlocks = mergeCrossingBlocks(rawBlocks)
     let blocks = materializeBlocks(
@@ -121,6 +133,70 @@ extension FamilyGraphLayoutCore {
     var unitIDs: Set<LayoutUnitID<PersonID>>
     var isShared: Bool
     var gatewayUnitIDs: Set<LayoutUnitID<PersonID>>
+  }
+
+  static func isSimpleGenerationChain<PersonID: Hashable>(
+    _ input: NormalizedGraphLayoutInput<PersonID>,
+    generations: GraphGenerationSolution<PersonID>
+  ) -> Bool {
+    let people = input.visiblePersonIDs
+    guard !people.isEmpty, people.contains(input.rootID), input.spouseEdges.isEmpty,
+      generations.isConsistent, generations.generations.count == people.count,
+      input.parentChildEdges.count == people.count - 1
+    else { return false }
+
+    var parentCounts: [PersonID: Int] = [:]
+    var childCounts: [PersonID: Int] = [:]
+    var adjacency: [PersonID: Set<PersonID>] = [:]
+    for edge in input.parentChildEdges {
+      parentCounts[edge.childID, default: 0] += 1
+      childCounts[edge.parentID, default: 0] += 1
+      guard parentCounts[edge.childID, default: 0] <= 1,
+        childCounts[edge.parentID, default: 0] <= 1
+      else { return false }
+      adjacency[edge.parentID, default: []].insert(edge.childID)
+      adjacency[edge.childID, default: []].insert(edge.parentID)
+    }
+
+    var visited: Set<PersonID> = [input.rootID]
+    var queue = [input.rootID]
+    var index = 0
+    while index < queue.count {
+      let personID = queue[index]
+      index += 1
+      for neighbor in adjacency[personID, default: []] where visited.insert(neighbor).inserted {
+        queue.append(neighbor)
+      }
+    }
+    guard visited == people else { return false }
+
+    var countsByGeneration: [Int: Int] = [:]
+    for generation in generations.generations.values {
+      countsByGeneration[generation, default: 0] += 1
+    }
+    return countsByGeneration.values.allSatisfy { $0 == 1 }
+  }
+
+  private static func buildSimpleChainGenerationOrderings<PersonID: Hashable>(
+    unitGraph: LayoutUnitGraph<PersonID>,
+    generations: [PersonID: Int]
+  ) -> [Int: LayoutGenerationOrdering<PersonID>] {
+    Dictionary(
+      uniqueKeysWithValues: unitGraph.units.compactMap { unitID in
+        guard let personID = unitID.personIDs.first,
+          let generation = generations[personID]
+        else { return nil }
+        return (
+          generation,
+          LayoutGenerationOrdering(
+            generation: generation,
+            unitIDs: [unitID],
+            contiguityConstraints: [],
+            orderingBuckets: []
+          )
+        )
+      }
+    )
   }
 
   private static func buildUnitGraph<PersonID: Hashable>(
@@ -274,16 +350,9 @@ extension FamilyGraphLayoutCore {
     ) { first, second in
       (first.0 || second.0, first.1.union(second.1))
     }
+    let childSetsByParent = immediateChildSets(in: Set(unique.keys))
     return Set(
       unique.map { memberUnits, metadata in
-        let strictSubsets = unique.keys.filter {
-          $0 != memberUnits && $0.isSubset(of: memberUnits)
-        }
-        let childSets = strictSubsets.filter { candidate in
-          !strictSubsets.contains { other in
-            candidate != other && candidate.isSubset(of: other)
-          }
-        }
         var byGeneration: [Int: Set<LayoutUnitID<PersonID>>] = [:]
         for unitID in memberUnits {
           guard let personID = unitID.personIDs.first,
@@ -296,11 +365,40 @@ extension FamilyGraphLayoutCore {
           memberUnitIDs: memberUnits,
           memberPersonIDs: Set(memberUnits.flatMap(\.personIDs)),
           unitIDsByGeneration: byGeneration,
-          childBlockIDs: Set(childSets.map { LayoutFamilyBlockID(memberUnitIDs: $0) }),
+          childBlockIDs: Set(
+            childSetsByParent[memberUnits, default: []].map {
+              LayoutFamilyBlockID(memberUnitIDs: $0)
+            }),
           separationGatewayUnitIDs: metadata.1,
           isShared: metadata.0
         )
       })
+  }
+
+  /// Crossing candidates have already been merged, so the remaining block sets are
+  /// laminar: every overlapping pair is nested. Indexing by one member therefore
+  /// finds every ancestor, and the smallest larger set is the unique direct parent.
+  private static func immediateChildSets<PersonID: Hashable>(
+    in blockSets: Set<Set<LayoutUnitID<PersonID>>>
+  ) -> [Set<LayoutUnitID<PersonID>>: Set<Set<LayoutUnitID<PersonID>>>] {
+    var blocksByUnit: [LayoutUnitID<PersonID>: [Set<LayoutUnitID<PersonID>>]] = [:]
+    for block in blockSets {
+      for unitID in block {
+        blocksByUnit[unitID, default: []].append(block)
+      }
+    }
+
+    var childrenByParent: [Set<LayoutUnitID<PersonID>>: Set<Set<LayoutUnitID<PersonID>>>] = [:]
+    for child in blockSets {
+      guard let representative = child.first else { continue }
+      let parent = blocksByUnit[representative, default: []]
+        .filter { $0.count > child.count }
+        .min { $0.count < $1.count }
+      if let parent {
+        childrenByParent[parent, default: []].insert(child)
+      }
+    }
+    return childrenByParent
   }
 
   private static func buildGenerationOrderings<PersonID: Hashable>(
