@@ -1031,6 +1031,14 @@ private struct GraphEdgeShape: Shape {
   var start: CGPoint
   var end: CGPoint
 
+  var animatableData: AnimatablePair<CGPoint.AnimatableData, CGPoint.AnimatableData> {
+    get { AnimatablePair(start.animatableData, end.animatableData) }
+    set {
+      start.animatableData = newValue.first
+      end.animatableData = newValue.second
+    }
+  }
+
   func path(in rect: CGRect) -> Path {
     let middleY = (start.y + end.y) / 2
     var path = Path()
@@ -1041,6 +1049,14 @@ private struct GraphEdgeShape: Shape {
       control2: CGPoint(x: end.x, y: middleY)
     )
     return path
+  }
+}
+
+enum GraphReflowAnimationPolicy {
+  static let duration: TimeInterval = 0.3
+
+  static func shouldAnimate(reduceMotion: Bool) -> Bool {
+    !reduceMotion
   }
 }
 
@@ -2104,7 +2120,13 @@ struct FamilyGraphView: View {
     cancelIntroAnimation()
     let previousNodeIDs = Set(store.nodes.keys)
     let previousEdgeIDs = Set(store.edges.map(\.id))
-    store.expand(node.person)
+    if GraphReflowAnimationPolicy.shouldAnimate(reduceMotion: reduceMotion) {
+      withAnimation(.easeInOut(duration: GraphReflowAnimationPolicy.duration)) {
+        store.expand(node.person)
+      }
+    } else {
+      store.expand(node.person)
+    }
     let addedNodeIDs = Set(store.nodes.keys).subtracting(previousNodeIDs)
     let addedEdgeIDs = Set(store.edges.map(\.id)).subtracting(previousEdgeIDs)
     updateFocus(to: node.person, moveCamera: false, animateTransition: true)

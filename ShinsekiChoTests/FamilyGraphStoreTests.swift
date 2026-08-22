@@ -6,6 +6,15 @@ import XCTest
 
 @MainActor
 final class FamilyGraphStoreTests: XCTestCase {
+  func testReflowAnimationPolicyEnablesSpatialAnimationNormally() {
+    XCTAssertTrue(GraphReflowAnimationPolicy.shouldAnimate(reduceMotion: false))
+    XCTAssertEqual(GraphReflowAnimationPolicy.duration, 0.3)
+  }
+
+  func testReflowAnimationPolicyDisablesSpatialAnimationForReduceMotion() {
+    XCTAssertFalse(GraphReflowAnimationPolicy.shouldAnimate(reduceMotion: true))
+  }
+
   private struct Fixture {
     let container: ModelContainer
     let a: Person
