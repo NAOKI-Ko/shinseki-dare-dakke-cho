@@ -51,6 +51,8 @@
 		C00000000000000000000042 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000043 /* PrivacyInfo.xcprivacy */; };
 		C00000000000000000000043 /* FamilyGraphLayoutCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000044 /* FamilyGraphLayoutCore.swift */; };
 		C00000000000000000000044 /* FamilyGraphLayoutCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000045 /* FamilyGraphLayoutCoreTests.swift */; };
+		C00000000000000000000045 /* FamilyGraphSemanticOrdering.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000046 /* FamilyGraphSemanticOrdering.swift */; };
+		C00000000000000000000046 /* FamilyGraphSemanticOrderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000047 /* FamilyGraphSemanticOrderingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -115,6 +117,8 @@
 		A00000000000000000000043 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A00000000000000000000044 /* FamilyGraphLayoutCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyGraphLayoutCore.swift; sourceTree = "<group>"; };
 		A00000000000000000000045 /* FamilyGraphLayoutCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyGraphLayoutCoreTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000046 /* FamilyGraphSemanticOrdering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyGraphSemanticOrdering.swift; sourceTree = "<group>"; };
+		A00000000000000000000047 /* FamilyGraphSemanticOrderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyGraphSemanticOrderingTests.swift; sourceTree = "<group>"; };
 		B00000000000000000000001 /* ShinsekiCho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ShinsekiCho.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000002 /* ShinsekiChoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShinsekiChoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000003 /* ShinsekiChoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ShinsekiChoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -197,6 +201,7 @@
 				A00000000000000000000006 /* PersonDetailView.swift */,
 				A00000000000000000000007 /* ConnectionMapView.swift */,
 				A00000000000000000000044 /* FamilyGraphLayoutCore.swift */,
+				A00000000000000000000046 /* FamilyGraphSemanticOrdering.swift */,
 				A00000000000000000000014 /* RelationLabeler.swift */,
 				A00000000000000000000015 /* TrialManager.swift */,
 				A00000000000000000000018 /* KeychainStore.swift */,
@@ -231,6 +236,7 @@
 				A00000000000000000000010 /* RelationshipManagerTests.swift */,
 				A00000000000000000000011 /* FamilyGraphStoreTests.swift */,
 				A00000000000000000000045 /* FamilyGraphLayoutCoreTests.swift */,
+				A00000000000000000000047 /* FamilyGraphSemanticOrderingTests.swift */,
 				A00000000000000000000016 /* TrialManagerTests.swift */,
 				A00000000000000000000023 /* PersonMergeTests.swift */,
 				A00000000000000000000025 /* PersonMemorySummaryTests.swift */,
@@ -403,6 +409,7 @@
 				C00000000000000000000006 /* PersonDetailView.swift in Sources */,
 				C00000000000000000000007 /* ConnectionMapView.swift in Sources */,
 				C00000000000000000000043 /* FamilyGraphLayoutCore.swift in Sources */,
+				C00000000000000000000045 /* FamilyGraphSemanticOrdering.swift in Sources */,
 				C00000000000000000000013 /* RelationLabeler.swift in Sources */,
 				C00000000000000000000014 /* TrialManager.swift in Sources */,
 				C00000000000000000000017 /* KeychainStore.swift in Sources */,
@@ -419,6 +426,7 @@
 				C00000000000000000000010 /* RelationshipManagerTests.swift in Sources */,
 				C00000000000000000000011 /* FamilyGraphStoreTests.swift in Sources */,
 				C00000000000000000000044 /* FamilyGraphLayoutCoreTests.swift in Sources */,
+				C00000000000000000000046 /* FamilyGraphSemanticOrderingTests.swift in Sources */,
 				C00000000000000000000015 /* TrialManagerTests.swift in Sources */,
 				C00000000000000000000022 /* PersonMergeTests.swift in Sources */,
 				C00000000000000000000024 /* PersonMemorySummaryTests.swift in Sources */,
